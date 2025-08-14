@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=workflows
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer:latest
+    restart: always
+    ports:
+      - 8080:8080
+    
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+
+  # --- Python Services --- 
+  x-python-base: &python-base
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres/workflows
+      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+    depends_on:
+      - postgres
+      - rabbitmq
+      - redis
+
+  api:
+    <<: *python-base
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+  
+  engine:
+    <<: *python-base
+    command: celery -A shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
+    volumes:
+      - .:/app
+
+  worker:
+    <<: *python-base
+    command: celery -A shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
+    deploy:
+      replicas: 2
+    volumes:
+      - .:/app
+    
+  relay:
+    <<: *python-base
+    command: python relay/main.py
+    volumes:
+      - .:/app
+
+volumes:
+  postgres_data:
