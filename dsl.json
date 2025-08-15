@@ -1,0 +1,116 @@
+{
+  "name": "Advanced Sales Approval",
+  "description": "An approval workflow that branches based on deal size and uses a delay.",
+  "version": 1,
+  "start_node_id": "trigger_new_deal",
+
+  "nodes": {
+    "trigger_new_deal": {
+      "type": "TRIGGER",
+      "connector": "salesforce:new_deal",
+      "next_node_id": "check_deal_size"
+    },
+
+    "check_deal_size": {
+      "type": "CONDITION",
+      "description": "If deal > $10k, needs manager approval. Otherwise, auto-approve.",
+      "branches": [
+        {
+          "name": "large_deal",
+          "condition": {
+            "all": [{ "fact": "trigger.data.amount", "operator": "greaterThan", "value": 10000 }]
+          },
+          "next_node_id": "request_manager_approval"
+        },
+        {
+          "name": "small_deal",
+          "condition": {
+            "all": [
+              { "fact": "trigger.data.amount", "operator": "lessThanOrEqual", "value": 10000 }
+            ]
+          },
+          "next_node_id": "filter_non_enterprise"
+        }
+      ]
+    },
+
+    "request_manager_approval": {
+      "type": "ACTION",
+      "connector": "slack:send_message",
+      "parameters": {
+        "channel": "sales-approvals",
+        "message": "New deal '{{ trigger.data.name }}' requires approval. Amount: ${{ trigger.data.amount }}"
+      },
+      "next_node_id": "wait_for_approval_response"
+    },
+
+    "wait_for_approval_response": {
+      "type": "DELAY",
+      "duration": "24h",
+      "next_node_id": "check_approval_status"
+    },
+
+    "check_approval_status": {
+      "type": "CONDITION",
+      "description": "Did the manager approve in time?",
+      "branches": [
+        {
+          "name": "approved",
+          "condition": {
+            "all": [
+              {
+                "fact": "nodes.request_manager_approval.outcome.approved",
+                "operator": "equal",
+                "value": true
+              }
+            ]
+          },
+          "next_node_id": "create_contract"
+        }
+      ],
+      "default_next_node_id": "escalate_to_director"
+    },
+
+    "filter_non_enterprise": {
+      "type": "FILTER",
+      "description": "Only proceed with workflows for 'Enterprise' customers.",
+      "condition": {
+        "all": [
+          { "fact": "trigger.data.customer_tier", "operator": "equal", "value": "Enterprise" }
+        ]
+      },
+      "next_node_id": "auto_approve_deal"
+    },
+
+    "auto_approve_deal": {
+      "type": "ACTION",
+      "connector": "salesforce:update_deal_status",
+      "parameters": {
+        "deal_id": "{{ trigger.data.id }}",
+        "status": "Auto-Approved"
+      },
+      "next_node_id": null
+    },
+
+    "create_contract": {
+      "type": "ACTION",
+      "connector": "docusign:create_envelope",
+      "parameters": {
+        "template_id": "enterprise-deal-template",
+        "recipient_email": "{{ trigger.data.customer_email }}"
+      },
+      "next_node_id": null
+    },
+
+    "escalate_to_director": {
+      "type": "ACTION",
+      "connector": "email:send",
+      "parameters": {
+        "to": "director@example.com",
+        "subject": "Approval Timed Out for Deal: {{ trigger.data.name }}",
+        "body": "Please review deal ID {{ trigger.data.id }}."
+      },
+      "next_node_id": null
+    }
+  }
+}
