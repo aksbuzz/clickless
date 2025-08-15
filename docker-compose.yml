@@ -2,72 +2,102 @@ services:
   postgres:
     image: postgres:latest
     environment:
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=workflows
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
 
   adminer:
     image: adminer:latest
     restart: always
     ports:
       - 8080:8080
-    
+    networks:
+      - app-network
+
   rabbitmq:
     image: rabbitmq:4-alpine
     ports:
       - "5672:5672"
       - "15672:15672"
-    
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
   redis:
     image: redis:8-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
 
-  # --- Python Services --- 
   x-python-base: &python-base
     build: .
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=postgresql://user:password@postgres/workflows
-      - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
-      - REDIS_URL=redis://redis:6379/0
       - PYTHONPATH=/app
     depends_on:
-      - postgres
-      - rabbitmq
-      - redis
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
 
   api:
     <<: *python-base
-    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: poetry run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - .:/app
     ports:
       - "8000:8000"
-  
+
   engine:
     <<: *python-base
-    command: celery -A shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
+    command: poetry run celery -A shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
     volumes:
       - .:/app
 
   worker:
     <<: *python-base
-    command: celery -A shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
+    command: poetry run celery -A shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
     deploy:
       replicas: 2
     volumes:
       - .:/app
-    
+
   relay:
     <<: *python-base
-    command: python relay/main.py
+    command: poetry run python relay/main.py
     volumes:
       - .:/app
 
 volumes:
   postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
