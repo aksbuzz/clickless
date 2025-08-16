@@ -1,15 +1,32 @@
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  gcc g++ libpq-dev curl \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir poetry
+
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry config virtualenvs.create false \
+  && poetry install --without dev --no-interaction --no-ansi
+
+COPY ./src ./src
+
+
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install poetry
-RUN pip install poetry
+RUN useradd -m appuser
 
-# Copy poetry lock and pyproject files
-COPY poetry.lock pyproject.toml ./
+COPY --from=builder /usr/local /usr/local
+COPY --from=builder /app/src ./src
 
-# Install dependencies
-RUN rm -rf .venv && poetry install --without dev --no-root
+ENV PYTHONPATH=/app
 
-# Copy the rest of the application code
-COPY ./src ./src
+USER appuser
+
+CMD ["python", "-m", "src.api.main"]

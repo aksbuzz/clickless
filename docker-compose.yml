@@ -1,28 +1,18 @@
 services:
   postgres:
-    image: postgres:latest
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks:
-      - app-network
-
-  adminer:
-    image: adminer:latest
-    restart: always
-    ports:
-      - 8080:8080
     networks:
       - app-network
 
@@ -51,12 +41,12 @@ services:
     networks:
       - app-network
 
-  x-python-base: &python-base
+  api:
     build: .
-    env_file:
-      - .env
-    environment:
-      - PYTHONPATH=/app
+    env_file: .env
+    command: poetry run gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
+    ports:
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,33 +57,43 @@ services:
     networks:
       - app-network
 
-  api:
-    <<: *python-base
-    command: poetry run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - ./src:/app/src
-    ports:
-      - "8000:8000"
-
   engine:
-    <<: *python-base
+    build: .
+    env_file: .env
     command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
-    volumes:
-      - ./src:/app/src
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
 
   worker:
-    <<: *python-base
+    build: .
+    env_file: .env
     command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
     deploy:
       replicas: 2
-    volumes:
-      - ./src:/app/src
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
 
   relay:
-    <<: *python-base
+    build: .
+    env_file: .env
     command: poetry run python src/relay/main.py
-    volumes:
-      - ./src:/app/src
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
 
 volumes:
   postgres_data:

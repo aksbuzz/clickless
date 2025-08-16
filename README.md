@@ -1,70 +1,191 @@
-1. Integrate with exisitng wokrflow app
-5. Add AWS (??)
+# ClickLess - Workflow Orchestration Engine
 
------
-<!-- NEXT PROJECTS -->
+ClickLess is a resilient, event-driven workflow orchestration engine designed to automate complex business processes. It follows a distributed architecture with a clear separation of concerns between workflow state management (Orchestrator) and business logic execution (Workers).
 
-That's a fantastic question. Building a workflow engine touches on so many core software engineering concepts (distributed systems, databases, APIs, message queues, reliability) that it's a perfect springboard into more advanced and impactful projects. For a developer with 4 years of experience looking to grow, the next steps should focus on either **deepening expertise** in a specific area or **broadening scope** to encompass more of the product lifecycle.
+## Table of Contents
 
-Here are some project ideas, categorized by the skills they build upon.
+1.  [Core Concepts](#core-concepts)
+2.  [Architecture](#architecture)
+3.  [Technology Stack](#technology-stack)
+4.  [Developer Setup](#developer-setup)
+5.  [Running the Application](#running-the-application)
+6.  [Defining Workflows & Actions](#defining-workflows--actions)
+7.  [Testing](#testing)
+8.  [Observability](#observability)
 
-### Category 1: Deepening Distributed Systems Expertise
+## Core Concepts
 
-These projects take the concepts from the workflow engine and apply them at a larger scale or with more complex requirements.
+*   **Workflow Definition**: A template for a business process, defined as a DAG (Directed Acyclic Graph) of steps. Stored in the database.
 
-1.  **Project: A Feature Flagging / A/B Testing Platform**
-    *   **Description:** Build a service like LaunchDarkly or Optimizely. It would have a UI to define feature flags (e.g., `new-checkout-flow`) and rules (e.g., "enable for 10% of users in Germany"). Your applications would query this service via a high-performance SDK to decide which features to show a user.
-    *   **Skills Built:**
-        *   **High Availability & Low Latency:** This service must be incredibly fast and resilient. If it goes down, it can't take your main applications down with it.
-        *   **Real-time Data Streaming:** You'd stream exposure events ("user X saw variation B") to a data pipeline for analysis. This involves tools like Kafka, Kinesis, or a high-throughput message queue.
-        *   **SDK Design:** You'll learn how to write a good client library for other developers to use.
-        *   **Complex Rule Engines:** Implementing the targeting rules (user attributes, percentages, etc.) is a challenging logic problem.
+    ```
+    {
+        "description": "A simple invoice approval flow.",
+        "start_at": "fetch_invoice",
+        "steps": {
+            "fetch_invoice": { "next": "validate_invoice" },
+            "validate_invoice": { "next": "generate_report" },
+            "generate_report": {
+                "type": "delay",
+                "duration_seconds": 15,
+                "next": "archive_report" 
+            },
+            "archive_report": { 
+            "next": "end",
+            "retry": {
+                "max_attempts": 3,
+                "delay_seconds": 5
+                }
+            }
+        }
+    }
+    ```
 
-2.  **Project: A Job Queueing System with Web UI (like Celery/Sidekiq but from scratch)**
-    *   **Description:** While you used Celery, building the core components yourself is a massive learning experience. Create a system where users can submit jobs, monitor their progress via a web UI (like Sidekiq's or Celery Flower's), see failures, and manually retry them.
-    *   **Skills Built:**
-        *   **Deeper Broker Knowledge:** You'll go beyond basic pub/sub and implement patterns like reliable queues, priority queues, and dead-letter handling directly with RabbitMQ or Redis.
-        *   **Concurrency and Worker Management:** How do you write a worker process that is efficient, handles signals gracefully (like SIGTERM for shutdown), and reports its status?
-        *   **WebSockets:** The web UI would use WebSockets to provide real-time updates on job statuses.
-        *   **API Design for Asynchronicity:** Designing endpoints to submit a job and get back a job ID for later polling.
+*   **Workflow Instance**: A running instance of a workflow definition. It maintains its own state (`data` blob), history, and current step.
+*   **Action**: A single unit of work (e.g., call an API, query a database). The business logic for an action is defined by a **Primitive Handler** in code and a specific **Action Definition** in the database.
+*   **Primitive Handler**: A generic, reusable piece of code that knows *how* to perform a type of task (e.g., make an HTTP request, upload to S3).
+*   **Event-Driven**: The system progresses through state transitions by passing messages asynchronously between services.
 
-3.  **Project: A Pluggable Data Ingestion Pipeline**
-    *   **Description:** Build a service that can pull data from various sources (e.g., a PostgreSQL database, a Salesforce account, a CSV file from an SFTP server), transform it, and load it into a destination (e.g., a data warehouse like Snowflake, BigQuery, or just another database). Think of a simplified version of Fivetran or Airbyte.
-    *   **Skills Built:**
-        *   **Plugin Architecture (Deep Dive):** This heavily relies on the "Level 3" connector model we discussed. You'd be building the framework for these connectors.
-        *   **Data Transformation:** Handling different data formats, cleaning messy data, and mapping schemas.
-        *   **Batch vs. Stream Processing:** You could design it to run on a schedule (batch) or to react to database change-data-capture (CDC) events (stream).
-        *   **Resilience and State Management:** If a pipeline transferring millions of rows fails midway, how do you resume from the point of failure without duplicating data?
+## Architecture
 
----
+ClickLess is comprised of several key components that work together over a message bus (RabbitMQ).
 
-### Category 2: Broadening Scope to Product & User Experience
+![alt text](docs/image.png)
 
-These projects focus less on the deep backend and more on delivering a complete, user-facing product.
+#### 1. Orchestration Service
+*   **Responsibility**: The brain of the system. It is the single source of truth for a workflow's state.
+*   **Function**:
+    *   Starts, stops, and resumes workflow instances.
+    *   Receives `STEP_COMPLETE` or `STEP_FAILED` events from workers.
+    *   Determines the next step in the workflow based on the definition.
+    *   Schedules new tasks for workers by placing messages on the `actions_queue`.
+    *   Handles system steps like delays, retries, and failures.
+*   It is stateless and idempotent; all state is persisted in the PostgreSQL database.
 
-4.  **Project: An Internal Developer Platform (IDP)**
-    *   **Description:** Many companies are building platforms to simplify life for their developers. Create a web portal where a developer can, with a few clicks:
-        *   Scaffold a new microservice from a template (e.g., a Python FastAPI service with Dockerfile, CI/CD pipeline, etc.).
-        *   View the health, logs, and deployment status of their services.
-        *   Manage feature flags for their services (integrating with the platform from Project #1).
-    *   **Skills Built:**
-        *   **"Platform as a Product" Thinking:** Your users are other developers. You need to think about their "user experience."
-        *   **Infrastructure as Code:** You'd use tools like Terraform or Pulumi to provision resources.
-        *   **CI/CD Automation:** You'll be dynamically creating and managing GitHub Actions or GitLab CI pipelines.
-        *   **Service Catalogs:** Integrating with tools like Backstage or building a simpler version to keep track of service ownership and documentation.
+#### 2. Worker Service
+*   **Responsibility**: Executes the actual business logic for a workflow step.
+*   **Function**:
+    *   Listens for messages on the `actions_queue`.
+    *   Upon receiving a task, it loads the required **Action Definition** from the database.
+    *   It uses the appropriate **Primitive Handler** (e.g., `HttpRequestPrimitive`) to execute the task using the configuration from the database.
+    *   Once execution is complete, it sends a `STEP_COMPLETE` or `STEP_FAILED` event back to the `orchestration_queue`.
+*   The worker is **not allowed to modify the core workflow state directly**. It only executes its task and reports the outcome.
 
-5.  **Project: A "Low-Code" API Builder**
-    *   **Description:** Create a UI where a less technical user can define a simple data model (e.g., a "Product" with fields: name, price, image_url) and the system automatically generates a fully functional REST and/or GraphQL API for it, complete with a database table.
-    *   **Skills Built:**
-        *   **Code Generation & Metaprogramming:** You'll write code that writes other code or dynamically configures an API gateway.
-        *   **Database Schema Management:** Programmatically creating and migrating database tables (e.g., using Alembic or Django Migrations).
-        *   **Authentication & Authorization:** You'd need to build a robust system for API keys and user permissions (e.g., "who can write to this endpoint?").
-        *   **UI/UX for Complex Tasks:** Making a complex process like API creation feel simple is a major design challenge.
+#### 3. PostgreSQL Database
+*   **Responsibility**: The system's persistence layer.
+*   **Key Tables**:
+    *   `workflow_definitions`: Stores the templates for all workflows.
+    *   `workflow_instances`: Tracks the state, data, and history of every running workflow.
+    *   `action_definitions`: Stores the configuration for reusable business actions.
+    *   `outbox`: Implements the Transactional Outbox pattern for reliable message dispatching.
 
-6.  **Project: A Real-time Notification Service**
-    *   **Description:** Build a centralized service that other microservices can call to send notifications to users. The service would manage user preferences (e.g., "send me an email for critical alerts, but a push notification for comments") and handle the actual delivery across different channels (Email via SendGrid, SMS via Twilio, Push Notifications via Firebase).
-    *   **Skills Built:**
-        *   **Integrating Third-Party APIs:** You'll become an expert at reading API docs, handling rate limits, and managing API keys securely.
-        *   **Fan-out Architectures:** A single incoming event ("user X commented on post Y") might need to be "fanned out" into multiple notifications.
-        *   **Template Management:** Building a system for storing and rendering notification templates (e.g., using Jinja2 for emails).
-        *   **User Preference Modeling:** Designing the database schema and API to handle complex user notification settings.
+#### 4. RabbitMQ (Message Bus)
+*   **Responsibility**: Provides reliable, asynchronous communication between the Orchestrator and Workers.
+*   **Key Queues**:
+    *   `orchestration_queue`: For events directed to the Orchestrator (e.g., `STEP_COMPLETE`).
+    *   `actions_queue`: For tasks directed to the Workers (e.g., `fetch_invoice`).
+    *   Each queue is paired with a Dead-Letter Queue (DLQ) to isolate and handle "poison pill" messages.
+
+#### 5. Message Relay
+*   **Responsibility**: Ensures guaranteed message delivery from the database to RabbitMQ.
+*   **Function**: A background process that polls the `outbox` table and publishes messages to RabbitMQ. This decouples the core application logic from message broker availability.
+
+## Technology Stack
+
+*   **Language**: Python 3.10+
+*   **Framework**: Celery (for task queuing and workers)
+*   **Database**: PostgreSQL
+*   **Message Broker**: RabbitMQ
+*   **Caching/Celery Backend**: Redis
+*   **Containerization**: Docker & Docker Compose
+
+## Developer Setup
+
+#### Prerequisites
+*   Docker and Docker Compose
+*   Python 3.10+
+*   `poetry`
+
+#### 1. Clone the Repository
+```bash
+git clone <your-repo-url>
+cd clickless
+```
+
+#### 2. Configure Environment Variables
+Copy the example environment file and customize it for your local setup.
+```bash
+cp .env.example .env
+```
+Key variables in `.env`:
+*   `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
+*   `RABBITMQ_URL`
+*   `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`
+
+#### 3. Build and Start Services
+This command will build the Docker images and start all the required services (Postgres, RabbitMQ, Redis, and the application services).
+```bash
+docker-compose up --build -d
+```
+The `-d` flag runs the containers in detached mode.
+
+#### 4. Setup the Database
+Run the database migrations to create the necessary tables.
+```bash
+# Execute this command in a new terminal
+docker-compose exec orchestrator alembic upgrade head
+```
+
+## Running the Application
+
+Once the setup is complete, the application services will be running inside Docker containers.
+
+*   **Orchestrator Service**: Listens to `orchestration_queue`.
+*   **Worker Service**: Listens to `actions_queue`.
+*   **Message Relay**: Periodically scans the `outbox` table.
+*   **API Service**: To interact with the application.
+
+#### Interacting with the API (Example)
+You can start a new workflow by sending a request to the API endpoint (assuming you have an API gateway service).
+
+```bash
+curl -X POST http://localhost:8000/workflows/{workflow_unique_name}/run \
+     -H "Content-Type: application/json" \
+     -d '{
+       "data": { "invoice_id": "inv_12345" }
+     }'
+```
+
+#### Viewing Logs
+To see the logs from all services in real-time:
+```bash
+docker-compose logs -f
+```
+To view logs for a specific service:
+```bash
+docker-compose logs -f worker
+```
+
+## Defining Workflows & Actions
+
+A key feature of ClickLess is defining business logic in the database.
+
+1.  **Create a Primitive Handler (Code)**: If a new *type* of action is needed (e.g., interacting with SFTP), add a new `...Primitive` class in `src/worker/primitives.py`. This should be a rare event.
+2.  **Define an Action (Database)**: To create a new action (e.g., "fetch-user-profile-from-api"), add a new row to the `action_definitions` table. This involves providing the `handler_type` (e.g., `http_request`) and the specific `config` JSON for that action. These definitions should be managed via Alembic migration scripts.
+3.  **Define a Workflow (Database)**: Define the sequence of steps and their connections in the `workflow_definitions` table, referencing the action `name`s.
+
+## Testing
+
+The project is configured with `pytest`.
+
+To run all tests:
+```bash
+pytest
+```
+
+## TODO
+
+1. Add Monitoring & Observability
+2. UI: Workflow Designer
+3. Webhook Handler
+4. Scheduler service to listen for workflows to process
+5. Orchestration heartbeat for stuck worker processes
