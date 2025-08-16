@@ -1,15 +1,12 @@
-import structlog
+from src.shared.logging_config import log
 
-from shared.loggin_config import setup_logging
 from src.orchestration.domain.ports import LockPort
 
-setup_logging()
-log = structlog.get_logger()
 
 class RedisLockService(LockPort):
   def __init__(self, redis_client):
     self.redis = redis_client
-    self.locks = set()
+    self.locks = {}
 
   def acquire_lock(self, key: str, timeout: int):
     try:
@@ -17,23 +14,23 @@ class RedisLockService(LockPort):
       acquired = lock.acquire(blocking=False)
 
       if acquired:
-        self.locks.add(key)
+        self.locks[key] = lock
         log.debug("Lock acquired", lock_key=key)
       else:
-        log.debug("Failed to acquire logck", lock_key=key)
+        log.debug("Failed to acquire lock", lock_key=key)
 
       return acquired
-  
-    except Exception as e:
+    except Exception:
       log.error("Lock acquisition failed", lock_key=key, exc_info=True)
       return False
-  
+
   def release_lock(self, key: str):
     try:
-      if key in self.locks:
-        lock = self.redis.lock(key)
+      lock = self.locks.pop(key, None)
+      if lock:
         lock.release()
-        self.locks.discard(key)
         log.debug("Lock released", lock_key=key)
-    except Exception as e:
+      else:
+        log.warning("No lock to release", lock_key=key)
+    except Exception:
       log.warning("Lock release failed", lock_key=key, exc_info=True)

@@ -9,13 +9,28 @@ class WorkflowStatePort(ABC):
   def load_state(self, instance_id: str):
     pass
 
-  @abstractmethod
-  def save_result(self, instance_id: str, action: str, result: ActionResult):
-    pass
+  # @abstractmethod
+  # def save_result(self, instance_id: str, action: str, result: ActionResult):
+  #   pass
 
   @abstractmethod
   def send_event(self, event_type: str, instance_id: str, step: str):
     pass
+
+
+class UnitOfWorkPort(ABC):
+    workflow: WorkflowStatePort
+    def __enter__(self) -> "UnitOfWorkPort":
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
 
 
 class ActionHandlerPort(ABC):

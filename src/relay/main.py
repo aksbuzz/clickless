@@ -1,13 +1,13 @@
 import time
 import structlog
 
-from shared.loggin_config import setup_logging
-from shared.db import get_db_connection
-from shared.celery_app import app as celery_app
+from src.shared.logging_config import setup_logging
+from src.shared.db import get_db_connection
+from src.shared.celery_app import app as celery_app
 
 from src.relay.application.service import RelayService
 
-from src.relay.adapters.postgres_repository import PostgresOutboxRepository
+from src.relay.adapters.postgres_unit_of_work import PostgresUnitOfWork
 from src.relay.adapters.dict_router import DictTaskRouter
 from src.relay.adapters.celery_publisher import CeleryTaskPublisher
 
@@ -20,11 +20,11 @@ TASK_ROUTING = {
 }
 
 def main():
-  outbox_repo = PostgresOutboxRepository(get_db_connection)
+  unit_of_work = PostgresUnitOfWork(get_db_connection())
   router = DictTaskRouter(TASK_ROUTING)
   publisher = CeleryTaskPublisher(celery_app)
 
-  service = RelayService(outbox_repo, publisher, router)
+  service = RelayService(unit_of_work, publisher, router)
 
   while True:
     try:

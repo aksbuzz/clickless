@@ -12,10 +12,33 @@ class WorkflowRepositoryPort(ABC):
     @abstractmethod
     def update_instance_status(self, instance_id: str, status: WorkflowStatus) -> None:
         pass
+
+    @abstractmethod
+    def update_history_and_data(self, instance_id: str,  history_entry_json: str, data_to_merge: dict | None):
+        pass
     
     @abstractmethod
     def schedule_step(self, instance_id: str, step_name: str, attempts: int = 1, 
                      publish_at: Optional[datetime] = None) -> None:
+        pass
+
+    @abstractmethod
+    def schedule_orchestration_event(self, instance_id: str, step_name: str,
+                                    publish_at: Optional[datetime] = None) -> None:
+        pass
+
+class UnitOfWorkPort(ABC):
+    workflow: WorkflowRepositoryPort
+    def __enter__(self) -> "UnitOfWorkPort":
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
         pass
 
 class LockPort(ABC):

@@ -33,6 +33,25 @@ CREATE TABLE outbox (
 CREATE INDEX idx_outbox_unprocessed ON outbox (processed_at) WHERE processed_at IS NULL;
 
 
+CREATE TABLE action_definitions (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) UNIQUE NOT NULL,
+  description TEXT,
+  
+  handler_type VARCHAR(100) NOT NULL, -- e.g., 'http_request', 'python_function'
+
+  config JSONB NOT NULL,
+
+  version INT NOT NULL DEFAULT 1,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  UNIQUE (name, version)
+);
+
+
 -- SEED
 INSERT INTO workflow_definitions (name, definition)
 VALUES ('invoice_approval', '{

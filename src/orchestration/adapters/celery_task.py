@@ -1,26 +1,22 @@
-import structlog
 from celery.exceptions import Reject
 
-from shared.celery_app import app
-from shared.db import get_db_connection
-from shared.redis_client import redis_client
-from shared.loggin_config import setup_logging
+from src.shared.celery_app import app
+from src.shared.db import get_db_connection
+from src.shared.redis_client import redis_client
+from src.shared.logging_config import log
 
 from src.orchestration.domain.events import WorkflowEvent
 from src.orchestration.domain.models import EventType
 
-from src.orchestration.adapters.postgres_repository import PostgresWorkflowRepository
+from src.orchestration.adapters.postgres_unit_of_work import PostgresUnitOfWork
 from src.orchestration.adapters.redis_lock import RedisLockService
 from src.orchestration.application.orchestration_service import (
   OrchestrationService, RetryableError, NonRetryableError
 )
 
-setup_logging()
-log = structlog.get_logger()
-
-workflow_repository = PostgresWorkflowRepository(get_db_connection)
+unit_of_work = PostgresUnitOfWork(get_db_connection())
 lock_service = RedisLockService(redis_client)
-service = OrchestrationService(workflow_repository, lock_service)
+service = OrchestrationService(unit_of_work, lock_service)
 
 
 @app.task(name="engine.orchestrate", queue="orchestration_queue", bind=True)
@@ -28,6 +24,7 @@ def orchestrate(self, message: dict):
   instance_id = message.get("instance_id")
   event_type = message.get("type")
   step_name = message.get("step")
+  data = message.get("data")
 
   log.info("Processing orchestration event", event_type=event_type, step=step_name)
 
@@ -35,7 +32,8 @@ def orchestrate(self, message: dict):
     event = WorkflowEvent(
       instance_id=instance_id,
       event_type=EventType(event_type),
-      step_name=step_name
+      step_name=step_name,
+      data=data
     )
 
     service.process_event(event)

@@ -4,7 +4,6 @@ import structlog
 
 def setup_logging():
   shared_processors = [
-    # merge context into log record
     structlog.contextvars.merge_contextvars,
     structlog.processors.TimeStamper(fmt="iso"),
     structlog.processors.add_log_level,
@@ -32,6 +31,9 @@ def setup_logging():
   handler.setFormatter(formatter)
 
   root_logger = logging.getLogger()
+  # Clear existing handlers to avoid duplicate logs
+  if root_logger.hasHandlers():
+      root_logger.handlers.clear()
   root_logger.addHandler(handler)
   root_logger.setLevel(logging.INFO)
 
@@ -39,3 +41,7 @@ def setup_logging():
     logging.getLogger(_log).setLevel(logging.WARNING)
 
   structlog.contextvars.clear_contextvars()
+
+# Automatically configure logging when this module is imported
+setup_logging()
+log = structlog.get_logger()

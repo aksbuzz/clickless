@@ -9,4 +9,4 @@ class WorkflowEvent:
     instance_id: str
     event_type: EventType
     step_name: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None

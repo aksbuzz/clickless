@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-from api.main import app
+from src.api.main import app
 
 
 def make_psycopg2_params(url: str):

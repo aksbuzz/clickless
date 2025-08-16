@@ -7,6 +7,7 @@ class WorkflowStatus(Enum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    PAUSED = "PAUSED"
 
 class EventType(Enum):
     START_WORKFLOW = "START_WORKFLOW"

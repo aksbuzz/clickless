@@ -24,3 +24,17 @@ class TaskPublisherPort(ABC):
     @abstractmethod
     def publish(self, task_name: str, queue: str, payload: str) -> None:
         pass
+
+class UnitOfWorkPort(ABC):
+    outbox: OutboxRepositoryPort
+    def __enter__(self) -> "UnitOfWorkPort":
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        pass
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass

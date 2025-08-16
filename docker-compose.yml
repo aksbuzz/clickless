@@ -69,31 +69,31 @@ services:
 
   api:
     <<: *python-base
-    command: poetry run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: poetry run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
-      - .:/app
+      - ./src:/app/src
     ports:
       - "8000:8000"
 
   engine:
     <<: *python-base
-    command: poetry run celery -A shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
+    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
     volumes:
-      - .:/app
+      - ./src:/app/src
 
   worker:
     <<: *python-base
-    command: poetry run celery -A shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
+    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
     deploy:
       replicas: 2
     volumes:
-      - .:/app
+      - ./src:/app/src
 
   relay:
     <<: *python-base
-    command: poetry run python relay/main.py
+    command: poetry run python src/relay/main.py
     volumes:
-      - .:/app
+      - ./src:/app/src
 
 volumes:
   postgres_data:
