@@ -1,25 +1,25 @@
 services:
   api:
-    command: poetry run uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ./src:/app/src
     environment:
       LOG_LEVEL: debug
 
   engine:
-    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=debug -Q orchestration_queue -n engine@%h
+    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q orchestration_queue -n engine@%h
     volumes:
       - ./src:/app/src
 
   worker:
-    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=debug -Q actions_queue -n worker@%h
+    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q actions_queue -n worker@%h
     volumes:
       - ./src:/app/src
     deploy:
       replicas: 1
 
   relay:
-    command: poetry run python src/relay/main.py
+    command: python src/relay/main.py
     volumes:
       - ./src:/app/src
 
