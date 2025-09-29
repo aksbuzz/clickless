@@ -1,0 +1,10 @@
+### Run workflow - Success
+POST http://localhost:8000/workflows/invoice_approval/run HTTP/1.1
+
+{ "data": {"invoice_details": { "amount": 1201 }} }
+
+### Run Workflow - error
+POST http://localhost:8000/workflows/invoice_approval/run HTTP/1.1
+
+{ "data": {"invoice_details": { "amount": 500 }} }
+

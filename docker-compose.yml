@@ -16,6 +16,14 @@ services:
     networks:
       - app-network
 
+  adminer:
+    image: adminer:latest
+    restart: always
+    ports:
+      - "8080:8080"
+    networks:
+      - app-network
+
   rabbitmq:
     image: rabbitmq:4-alpine
     ports:
@@ -44,7 +52,7 @@ services:
   api:
     build: .
     env_file: .env
-    command: poetry run gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
+    command: gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
     ports:
       - "8000:8000"
     depends_on:
@@ -60,7 +68,7 @@ services:
   engine:
     build: .
     env_file: .env
-    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
+    command: celery -A src.shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -72,7 +80,7 @@ services:
   worker:
     build: .
     env_file: .env
-    command: poetry run celery -A src.shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
+    command: celery -A src.shared.celery_app.app worker --loglevel=info -Q actions_queue -n worker@%h
     deploy:
       replicas: 2
     depends_on:
@@ -86,7 +94,7 @@ services:
   relay:
     build: .
     env_file: .env
-    command: poetry run python src/relay/main.py
+    command: python src/relay/main.py
     depends_on:
       rabbitmq:
         condition: service_healthy
