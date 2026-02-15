@@ -24,10 +24,10 @@ redis = "*"
 pika = "*"
 boto3 = "*"
 structlog = "*"
+httpx = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
-httpx = "*"
 testcontainers = "*"
 
 [build-system]

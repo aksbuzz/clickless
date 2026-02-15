@@ -1,56 +1,52 @@
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Tuple
 from datetime import datetime
 
-from src.orchestration.domain.models import WorkflowStatus, WorkflowInstance, WorkflowDefinition
+from src.orchestration.domain.models import WorkflowStatus, WorkflowInstance, WorkflowVersion, WorkflowStepExecution
 
 class WorkflowRepositoryPort(ABC):
-    @abstractmethod
-    def get_instance_with_definition(self, instance_id: str) -> Optional[tuple[WorkflowInstance, WorkflowDefinition]]:
-        pass
-    
-    @abstractmethod
-    def update_instance_status(self, instance_id: str, status: WorkflowStatus) -> None:
-        pass
+  @abstractmethod
+  def find_instance(self, instance_id: str) -> Optional[Tuple[WorkflowInstance, WorkflowVersion]]:
+    """Finds a workflow instance and its corresponding version definition"""
+    pass
 
-    @abstractmethod
-    def update_history_and_data(self, instance_id: str,  history_entry_json: str, data_to_merge: dict | None):
-        pass
-    
-    @abstractmethod
-    def schedule_step(self, instance_id: str, step_name: str, attempts: int = 1, 
-                     publish_at: Optional[datetime] = None) -> None:
-        pass
+  @abstractmethod
+  def save_instance(self, instance: WorkflowInstance) -> None:
+    """Saves the state of a WorkflowInstance"""
+    pass
+  
+  @abstractmethod
+  def find_current_step_execution(self, instance_id: str, step_name: str) -> Optional[WorkflowStepExecution]:
+    """Finds the most recent step execution for a given instance and step name"""
+    pass
+  
+  @abstractmethod
+  def add_step_execution(self, step_execution: WorkflowStepExecution) -> None:
+    """Adds a new step execution record"""
+    pass
 
-    @abstractmethod
-    def schedule_orchestration_event(self, instance_id: str, step_name: str,
-                                    publish_at: Optional[datetime] = None) -> None:
-        pass
+  @abstractmethod
+  def save_step_execution(self, step_execution: WorkflowStepExecution) -> None:
+    """Saves the state of a WorkflowStepExecution"""
+    pass
+  
+  @abstractmethod
+  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None) -> None:
+    """Schedules a message in the outbox for later publishing."""
+    pass
+
 
 class UnitOfWorkPort(ABC):
-    workflow: WorkflowRepositoryPort
-    def __enter__(self) -> "UnitOfWorkPort":
-        pass
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        pass
-
-    def commit(self) -> None:
-        pass
-
-    def rollback(self) -> None:
-        pass
+  workflow: WorkflowRepositoryPort
+  def __enter__(self) -> "UnitOfWorkPort": ...
+  def __exit__(self, exc_type, exc_val, exc_tb) -> None: ...
+  def commit(self) -> None: ...
+  def rollback(self) -> None: ...
 
 class LockPort(ABC):
-    @abstractmethod
-    def acquire_lock(self, key: str, timeout: int) -> bool:
-        pass
-    
-    @abstractmethod
-    def release_lock(self, key: str) -> None:
-        pass
+  @abstractmethod
+  def acquire_lock(self, key: str, timeout: int) -> bool: ...
+  
+  @abstractmethod
+  def release_lock(self, key: str) -> None: ...
 
-class EventPublisherPort(ABC):
-    @abstractmethod
-    def publish_step_result(self, instance_id: str, step_name: str, success: bool) -> None:
-        pass

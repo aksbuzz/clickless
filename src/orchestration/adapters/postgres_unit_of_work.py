@@ -1,13 +1,12 @@
 import json
-import psycopg2
 from typing import Optional, Tuple
-from datetime import datetime
-from psycopg2.extras import RealDictCursor
+from datetime import datetime, timezone
 
 from src.shared.logging_config import log
+from src.shared.base_unit_of_work import BasePostgresUnitOfWork
 
 from src.orchestration.domain.models import (
-  WorkflowDefinition, WorkflowInstance, WorkflowStatus
+  WorkflowVersion, WorkflowInstance, WorkflowStatus, WorkflowStepExecution
 )
 from src.orchestration.domain.ports import WorkflowRepositoryPort, UnitOfWorkPort
 
@@ -15,153 +14,110 @@ from src.orchestration.domain.ports import WorkflowRepositoryPort, UnitOfWorkPor
 class PostgresWorkflowRepository(WorkflowRepositoryPort):
   def __init__(self, cursor):
     self.cursor = cursor
-  
-  def get_instance_with_definition(self, instance_id: str) -> Optional[Tuple[WorkflowInstance, WorkflowDefinition]]:
+
+  def find_instance(self, instance_id: str) -> Optional[Tuple[WorkflowInstance, WorkflowVersion]]:
     self.cursor.execute("""
       SELECT
-        i.id,
-        i.definition_id,
-        i.status,
-        i.current_step,
-        i.current_step_attempts as attempts,
-        i.data,
-        i.history,
-        i.created_at,
-        i.updated_at,
-        d.definition
+        i.id, i.workflow_version_id, i.status, i.current_step,
+        i.current_step_attempts, i.data, v.definition
       FROM workflow_instances i
-      JOIN workflow_definitions d ON i.definition_id = d.id
+      JOIN workflow_versions v ON i.workflow_version_id = v.id
       WHERE i.id = %s
     """, (instance_id,))
 
     row = self.cursor.fetchone()
     if not row:
       return None
-        
+  
     instance = WorkflowInstance(
       id=str(row['id']),
-      definition_id=str(row['definition_id']),
+      workflow_version_id=str(row['workflow_version_id']),
       status=WorkflowStatus(row['status']),
       current_step=row['current_step'],
-      attempts=row['attempts'] or 0,
-      data=row['data'] or {},
-      history=row['history'] or []
-    )
-        
-    definition = WorkflowDefinition(
-        id=str(row['definition_id']),
-        definition=row['definition']
+      current_step_attempts=row['current_step_attempts'] or 0,
+      data=row['data'] or {}
     )
 
-    return instance, definition
-      
-  def update_instance_status(self, instance_id: str, status: WorkflowStatus) -> None:
+    version = WorkflowVersion(
+      id=str(row['workflow_version_id']),
+      definition=row['definition']
+    )
+
+    return instance, version
+  
+  def find_current_step_execution(self, instance_id: str, step_name: str) -> Optional[WorkflowStepExecution]:
     self.cursor.execute("""
-      UPDATE workflow_instances
-      SET status = %s, updated_at = NOW()
-      WHERE id = %s
-    """, (status.value, instance_id,))
-
-    log.info("Instance status updated", status=status.value)
-
-  def update_history_and_data(self, instance_id, history_entry_json, data_to_merge):
-    if data_to_merge:
-      self.cursor.execute(
-        """
-          UPDATE workflow_instances
-          SET 
-              history = history || %s::jsonb,
-              data = data || %s::jsonb,
-              updated_at = NOW()
-          WHERE id = %s
-        """, 
-        (history_entry_json, json.dumps(data_to_merge), instance_id,)
-      )
-    else:
-      self.cursor.execute("""
-        UPDATE workflow_instances
-        SET 
-          history = history || %s::jsonb,
-          updated_at = NOW()
-        WHERE id = %s
-        """, 
-        (history_entry_json, instance_id,)
-      )
-
-    log.info("Step result recorded in instance")
-
-  def schedule_step(self, instance_id: str, step_name: str, attempts: int = 1, publish_at: Optional[datetime] = None) -> None:
-    if publish_at is None:
-      publish_at = datetime.utcnow()
-
+      SELECT 
+        id, instance_id, step_name, status, attempts, started_at,
+        completed_at, input_data, output_data, error_details
+      FROM workflow_step_executions
+      WHERE instance_id = %s AND step_name = %s
+      ORDER BY started_at DESC
+      LIMIT 1
+    """, (instance_id, step_name,))
+    row = self.cursor.fetchone()
+    return WorkflowStepExecution(**row) if row else None
+  
+  def save_instance(self, instance: WorkflowInstance) -> None:
     self.cursor.execute("""
-      UPDATE workflow_instances
-      SET 
-        status = %s, 
+      UPDATE workflow_instances SET
+        status = %s,
         current_step = %s,
         current_step_attempts = %s,
+        data = %s,
         updated_at = NOW()
       WHERE id = %s
-    """, (WorkflowStatus.RUNNING.value, step_name, attempts, instance_id,))
+    """, (
+      instance.status.value,
+      instance.current_step,
+      instance.current_step_attempts,
+      json.dumps(instance.data),
+      instance.id,
+    ))
+    log.info("Saved instance state", instance_id=instance.id, status=instance.status.value)
 
-    outbox_payload = json.dumps({"action": step_name, "instance_id": instance_id})
+  def add_step_execution(self, step: WorkflowStepExecution) -> None:
+    self.cursor.execute("""
+      INSERT INTO workflow_step_executions (id, instance_id, step_name, status, 
+        attempts, started_at, input_data)
+      VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (
+        step.id, step.instance_id, step.step_name, step.status.value,
+        step.attempts, step.started_at, json.dumps(step.input_data) if step.input_data else None
+    ))
+    log.info("Added new step execution", instance_id=step.instance_id, step=step.step_name)
 
+
+  def save_step_execution(self, step: WorkflowStepExecution) -> None:
+    self.cursor.execute("""
+      UPDATE workflow_step_executions SET
+        status = %s,
+        completed_at = %s,
+        output_data = %s,
+        error_details = %s
+      WHERE id = %s
+    """, (
+      step.status.value,
+      step.completed_at,
+      json.dumps(step.output_data) if step.output_data else None,
+      step.error_details,
+      step.id
+    ))
+    log.info("Saved step execution state", step_execution_id=step.id, status=step.status.value)
+
+  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None) -> None:
+    if publish_at is None:
+      publish_at = datetime.now(timezone.utc)
+          
     self.cursor.execute("""
       INSERT INTO outbox (destination, payload, publish_at, created_at)
       VALUES (%s, %s, %s, NOW())
-    """, ('actions_queue', outbox_payload, publish_at))
+    """, (destination, json.dumps(payload), publish_at))
+    log.info("Scheduled message for outbox", destination=destination)
 
-    log.info("Step scheduled", step=step_name, attempts=attempts)
 
-
-  def schedule_orchestration_event(self, instance_id: str, step_name: str, publish_at: Optional[datetime]):
-    if publish_at is None:
-      publish_at = datetime.utcnow()
-    
-    history_entry = json.dumps({"step": step_name, "status": "succeeded","resumed_at": publish_at.isoformat()})
-
-    # Update history
-    self.cursor.execute(
-      "UPDATE workflow_instances " \
-      "SET history = history || %s::jsonb, updated_at = NOW(), current_step = %s " \
-      "WHERE id = %s; ",
-      (history_entry, step_name, instance_id,)
-    )
-
-    # mark task as Done
-    outbox_payload = json.dumps({"step": step_name, "type": "STEP_COMPLETE", "instance_id": str(instance_id)})
-
-    self.cursor.execute(
-      "INSERT INTO outbox (destination, payload, publish_at) " \
-      "VALUES (%s, %s, %s); ",
-      ('orchestration_queue', outbox_payload, publish_at,)
-    )
-
-class PostgresUnitOfWork(UnitOfWorkPort):
+class PostgresUnitOfWork(BasePostgresUnitOfWork, UnitOfWorkPort):
   workflow: PostgresWorkflowRepository
 
-  def __init__(self, conn_string: str):
-    self.conn_string = conn_string
-
-  def __enter__(self):
-    self.conn = psycopg2.connect(self.conn_string, cursor_factory=RealDictCursor)
-    self.cursor = self.conn.cursor()
-    
-    self.workflow = PostgresWorkflowRepository(self.cursor)
-    return self
-  
-  def __exit__(self, exc_type, exc_val, exc_tb):
-    if exc_type:
-      self.rollback()
-    else:
-      self.commit()
-    
-    self.workflow = None
-    self.cursor.close()
-    self.conn.close()
-
-  def commit(self):
-    self.conn.commit()
-
-  def rollback(self):
-    self.conn.rollback()
+  def _create_repositories(self, cursor):
+    self.workflow = PostgresWorkflowRepository(cursor)

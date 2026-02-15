@@ -1,10 +1,111 @@
-### Run workflow - Success
-POST http://localhost:8000/workflows/invoice_approval/run HTTP/1.1
+### Health
+GET http://localhost:8000/health
+
+### List connectors
+GET http://localhost:8000/connectors
+
+### List all workflows
+GET http://localhost:8000/workflows
+
+### Get workflow by ID (replace with actual UUID)
+GET http://localhost:8000/workflows/f05fa85c-f6ea-4bd8-bd0f-28456e1c7b75
+
+### Create a new workflow (HTTP connector)
+POST http://localhost:8000/workflows HTTP/1.1
+Content-Type: application/json
+
+{
+  "name": "simple_http_flow",
+  "definition": {
+    "trigger": {
+      "connector_id": "http",
+      "trigger_id": "http_request_received",
+      "config": {}
+    },
+    "start_at": "make_request",
+    "steps": {
+      "make_request": {
+        "type": "action",
+        "connector_id": "http",
+        "action_id": "http_request",
+        "config": { "url": "https://httpbin.org/get", "method": "GET" },
+        "next": "log_result"
+      },
+      "log_result": {
+        "type": "action",
+        "connector_id": "internal",
+        "action_id": "log",
+        "config": { "message": "HTTP request completed" },
+        "next": "end"
+      }
+    }
+  }
+}
+
+### Create a workflow with wait-for-event
+POST http://localhost:8000/workflows HTTP/1.1
+Content-Type: application/json
+
+{
+  "name": "approval_flow",
+  "definition": {
+    "trigger": {
+      "connector_id": "http",
+      "trigger_id": "http_request_received",
+      "config": {}
+    },
+    "start_at": "prepare",
+    "steps": {
+      "prepare": {
+        "type": "action",
+        "connector_id": "internal",
+        "action_id": "log",
+        "config": { "message": "Preparing for approval" },
+        "next": "wait_for_approval"
+      },
+      "wait_for_approval": {
+        "type": "wait_for_event",
+        "event_name": "approval",
+        "timeout_seconds": 3600,
+        "next": "approved"
+      },
+      "approved": {
+        "type": "action",
+        "connector_id": "internal",
+        "action_id": "log",
+        "config": { "message": "Approval received!" },
+        "next": "end"
+      }
+    }
+  }
+}
+
+### Run invoice workflow - Success (amount > 1000, takes true branch)
+POST http://localhost:8000/workflows/invoice_workflow/run HTTP/1.1
+Content-Type: application/json
 
 { "data": {"invoice_details": { "amount": 1201 }} }
 
-### Run Workflow - error
-POST http://localhost:8000/workflows/invoice_approval/run HTTP/1.1
+### Run invoice workflow - Branch false (amount <= 1000, goes to end)
+POST http://localhost:8000/workflows/invoice_workflow/run HTTP/1.1
+Content-Type: application/json
 
 { "data": {"invoice_details": { "amount": 500 }} }
 
+### Trigger workflow via webhook
+POST http://localhost:8000/webhooks/invoice_workflow HTTP/1.1
+Content-Type: application/json
+
+{ "data": {"invoice_details": { "amount": 2000 }} }
+
+### Cancel a running instance (replace with actual UUID)
+POST http://localhost:8000/instances/REPLACE_WITH_INSTANCE_ID/cancel
+
+### Send event to resume a waiting instance (replace with actual UUID)
+POST http://localhost:8000/instances/REPLACE_WITH_INSTANCE_ID/events HTTP/1.1
+Content-Type: application/json
+
+{ "data": {"approved": true, "approver": "manager@example.com"} }
+
+### Workflow instance status (replace with actual UUID)
+GET http://localhost:8000/instances/REPLACE_WITH_INSTANCE_ID

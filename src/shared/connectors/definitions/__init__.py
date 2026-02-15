@@ -1,0 +1,9 @@
+import src.shared.connectors.definitions.http
+import src.shared.connectors.definitions.webhook
+import src.shared.connectors.definitions.internal
+import src.shared.connectors.definitions.flow_control
+import src.shared.connectors.definitions.slack
+import src.shared.connectors.definitions.trello
+import src.shared.connectors.definitions.github
+import src.shared.connectors.definitions.postgresql
+import src.shared.connectors.definitions.python

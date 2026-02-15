@@ -1,103 +1,248 @@
+import os
+
 import structlog
-import json
-import psycopg2
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import UUID, uuid4
-from psycopg2.extras import RealDictCursor
 
 from src.shared.logging_config import log
-from src.shared.db import get_db_connection
+from src.shared.connectors.registry import registry as connector_registry
+import src.shared.connectors.definitions  # noqa: F401 — registers connectors on import
+from src.shared.triggers.registry import TriggerHandlerRegistry
+from src.api.trigger_handlers.github import GitHubTriggerHandler
+from src.api.trigger_handlers.slack import SlackTriggerHandler
+from src.api.trigger_handlers.trello import TrelloTriggerHandler
+
+from src.api.adapters.postgres_unit_of_work import PostgresAPIUnitOfWork
+from src.api.application.service import WorkflowManagementService
+from src.api.domain.exceptions import (
+  WorkflowNotFoundError, InstanceNotFoundError,
+  InvalidStateError, DuplicateWorkflowError, ValidationError,
+)
 
 app = FastAPI()
+
+app.add_middleware(
+  CORSMiddleware,
+  allow_origins=["http://localhost:5173"],
+  allow_methods=["GET", "POST"],
+  allow_headers=["*"],
+)
+
+uow = PostgresAPIUnitOfWork()
+service = WorkflowManagementService(uow, connector_registry)
+
+trigger_registry = TriggerHandlerRegistry()
+trigger_registry.register("github", GitHubTriggerHandler())
+trigger_registry.register("slack", SlackTriggerHandler())
+trigger_registry.register("trello", TrelloTriggerHandler())
+
 
 @app.middleware("http")
 async def logging_middleware(request: Request, call_next):
   structlog.contextvars.clear_contextvars()
-  
   request_id = str(uuid4())
   structlog.contextvars.bind_contextvars(request_id=request_id)
-  
   response = await call_next(request)
-
   structlog.contextvars.clear_contextvars()
   return response
 
 
+# --- Request Models ---
+
 class WorkflowPayload(BaseModel):
   data: dict
 
+class CreateWorkflowPayload(BaseModel):
+  name: str
+  definition: dict
+
+class CreateVersionPayload(BaseModel):
+  definition: dict
+
+class EventPayload(BaseModel):
+  data: dict = {}
+
+
+# --- Health ---
+
+@app.get("/health")
+def health():
+  try:
+    result = service.health_check()
+    return result
+  except Exception:
+    raise HTTPException(status_code=503, detail="Database unavailable")
+
+
+# --- Connector Discovery ---
+
+@app.get("/connectors")
+def list_connectors():
+  return service.list_connectors()
+
+
+# --- Workflow CRUD ---
+
+@app.post("/workflows", status_code=201)
+def create_workflow(payload: CreateWorkflowPayload):
+  try:
+    return service.create_workflow(payload.name, payload.definition)
+  except ValidationError as e:
+    raise HTTPException(status_code=400, detail={"validation_errors": e.errors})
+  except DuplicateWorkflowError as e:
+    raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/workflows")
+def list_workflows():
+  return service.list_workflows()
+
+
+@app.get("/workflows/{workflow_id}")
+def get_workflow(workflow_id: UUID):
+  try:
+    return service.get_workflow(str(workflow_id))
+  except WorkflowNotFoundError:
+    raise HTTPException(status_code=404, detail="Workflow not found")
+
+
+@app.post("/workflows/{workflow_id}/versions", status_code=201)
+def create_version(workflow_id: UUID, payload: CreateVersionPayload):
+  try:
+    return service.create_version(str(workflow_id), payload.definition)
+  except ValidationError as e:
+    raise HTTPException(status_code=400, detail={"validation_errors": e.errors})
+  except WorkflowNotFoundError:
+    raise HTTPException(status_code=404, detail="Workflow not found")
+
+
+# --- Workflow Execution ---
 
 @app.post("/workflows/{definition_name}/run")
 def run_workflow(definition_name: str, payload: WorkflowPayload):
-  log.info("Received request to start workflow", definition=definition_name)
-
-  conn = psycopg2.connect(get_db_connection(), cursor_factory=RealDictCursor)
-  cursor = conn.cursor()
   try:
-    # get definition id
-    cursor.execute(
-      "SELECT id FROM workflow_definitions " \
-      "WHERE name = %s AND is_active = true; ",
-      (definition_name,)
-    )
-    def_row = cursor.fetchone()
-    if not def_row:
-      raise HTTPException(status_code=404, detail="Workflow definition not found")
-    definition_id = def_row["id"]
+    return service.start_workflow(definition_name, payload.data)
+  except WorkflowNotFoundError:
+    raise HTTPException(status_code=404, detail="Workflow definition not found")
 
-    # create workflow instance
-    cursor.execute(
-      "INSERT INTO workflow_instances (definition_id, status, data, history) " \
-      "VALUES (%s, 'PENDING', %s, '[]'::jsonb) " \
-      "RETURNING id; ",
-      (definition_id, json.dumps(payload.data),)
-    )
-    instance_id = cursor.fetchone()["id"]
 
-    structlog.contextvars.bind_contextvars(instance_id=str(instance_id))
-    log.info("Workflow instance created in DB, preparing outbox message")
+@app.post("/webhooks/{workflow_name}")
+def webhook_trigger(workflow_name: str, request: Request, payload: WorkflowPayload = None):
+  """Trigger a workflow via webhook. Accepts any JSON body as workflow data."""
+  try:
+    data = payload.data if payload else {}
+    return service.trigger_webhook(workflow_name, data)
+  except WorkflowNotFoundError:
+    raise HTTPException(status_code=404, detail="Workflow not found")
+  except InvalidStateError as e:
+    raise HTTPException(status_code=400, detail=str(e))
 
-    # outbox message to trigger engine
-    outbox_payload = json.dumps({
-      "type": "START_WORKFLOW",
-      "instance_id": str(instance_id)
-    })
-    cursor.execute(
-      "INSERT INTO outbox (destination, payload) " \
-      "VALUES (%s, %s); ",
-      ('orchestration_queue', outbox_payload)
-    )
 
-    conn.commit()
-    
-    log.info("Workflow started successfully")
-    return {"message": "Workflow started", "instance_id": instance_id}
-  
-  except Exception as e:
-    conn.rollback()
-    log.error("Failed to start workflow", exc_info=True)
-    raise HTTPException(status_code=500, detail=f"Failed to start workflow: {e}")
-  finally:
-    if cursor:
-      cursor.close()
-    if conn:
-      conn.close()
+# --- Instance Operations ---
+
+@app.get("/instances")
+def list_instances(status: str = None, workflow_id: UUID = None, limit: int = 50, offset: int = 0):
+  return service.list_instances(
+    status=status,
+    workflow_id=str(workflow_id) if workflow_id else None,
+    limit=limit,
+    offset=offset,
+  )
 
 
 @app.get("/instances/{instance_id}")
 def get_instance_status(instance_id: UUID):
-  conn = psycopg2.connect(get_db_connection(), cursor_factory=RealDictCursor)
-  cursor = conn.cursor()
   try:
-    cursor.execute("SELECT * FROM workflow_instances WHERE id = %s; ", (str(instance_id),))
-    instance = cursor.fetchone()
-  finally:
-    if cursor:
-      cursor.close()
-    if conn:
-      conn.close()
-  
-  if not instance:
+    return service.get_instance(str(instance_id))
+  except InstanceNotFoundError:
     raise HTTPException(status_code=404, detail="Instance not found")
-  return instance
+
+
+@app.get("/instances/{instance_id}/steps")
+def get_instance_steps(instance_id: UUID):
+  try:
+    return service.get_instance_steps(str(instance_id))
+  except InstanceNotFoundError:
+    raise HTTPException(status_code=404, detail="Instance not found")
+
+
+@app.post("/instances/{instance_id}/cancel")
+def cancel_instance(instance_id: UUID):
+  try:
+    return service.cancel_instance(str(instance_id))
+  except InstanceNotFoundError:
+    raise HTTPException(status_code=404, detail="Instance not found")
+  except InvalidStateError as e:
+    raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/instances/{instance_id}/events")
+def send_event(instance_id: UUID, payload: EventPayload):
+  """Resume a workflow that is waiting for an external event."""
+  try:
+    return service.send_event(str(instance_id), payload.data)
+  except InstanceNotFoundError:
+    raise HTTPException(status_code=404, detail="Instance not found")
+  except InvalidStateError as e:
+    raise HTTPException(status_code=409, detail=str(e))
+
+
+# --- External Trigger Webhooks ---
+
+def _get_connector_config(connector_id: str) -> dict:
+  """Load system-level signing secrets from environment variables."""
+  if connector_id == "github":
+    return {"webhook_secret": os.getenv("GITHUB_WEBHOOK_SECRET", "")}
+  elif connector_id == "slack":
+    return {"signing_secret": os.getenv("SLACK_SIGNING_SECRET", "")}
+  return {}
+
+
+@app.head("/triggers/{connector_id}/webhook")
+def trigger_webhook_head(connector_id: str):
+  """HEAD endpoint for Trello webhook URL verification."""
+  handler = trigger_registry.get_handler(connector_id)
+  if not handler:
+    raise HTTPException(status_code=404, detail=f"Unknown connector: {connector_id}")
+  return Response(status_code=200)
+
+
+@app.post("/triggers/{connector_id}/webhook")
+async def trigger_webhook_external(connector_id: str, request: Request):
+  """Receives webhooks from external services and starts matching workflows."""
+  handler = trigger_registry.get_handler(connector_id)
+  if not handler:
+    raise HTTPException(status_code=404, detail=f"Unknown connector: {connector_id}")
+
+  body = await request.body()
+  headers = {k.lower(): v for k, v in request.headers.items()}
+  connector_config = _get_connector_config(connector_id)
+
+  validation = handler.validate_webhook(headers, body, connector_config)
+  if not validation.is_valid:
+    log.warning("Webhook validation failed", connector=connector_id, error=validation.error_message)
+    raise HTTPException(status_code=401, detail=validation.error_message)
+
+  if validation.challenge_response is not None:
+    return {"challenge": validation.challenge_response}
+
+  try:
+    events = handler.parse_events(headers, body)
+  except Exception as e:
+    log.error("Failed to parse webhook payload", connector=connector_id, error=str(e))
+    raise HTTPException(status_code=400, detail="Failed to parse webhook payload")
+
+  if not events:
+    return {"message": "Acknowledged, no matching trigger events"}
+
+  all_started = []
+  for event in events:
+    started = service.process_external_trigger(event, handler)
+    all_started.extend(started)
+
+  return {
+    "message": f"Processed {len(events)} event(s), started {len(all_started)} workflow(s)",
+    "triggered": all_started,
+  }

@@ -2,13 +2,14 @@ import os
 from celery import Celery
 from kombu import Queue
 
+from src.shared.constants import ORCHESTRATION_QUEUE, ACTIONS_QUEUE, ORCHESTRATION_DLQ, ACTIONS_DLQ
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL")
 
 app = Celery('workflows', 
   broker=RABBITMQ_URL, 
   backend='redis://redis:6379/1',
-  include=['src.orchestration.adapters.celery_task', 'src.worker.adapters.celery_task']
+  include=['src.orchestration.entrypoint.celery_task', 'src.worker.entrypoint.celery_task']
 )
 
 app.conf.update(
@@ -21,20 +22,20 @@ app.conf.update(
 
 app.conf.task_queues = (
   # DLQ
-  Queue('orchestration_dlq', routing_key='orchestration_dlq', durable=True),
-  Queue('actions_dlq', routing_key='actions_dlq', durable=True),
-  
+  Queue(ORCHESTRATION_DLQ, routing_key=ORCHESTRATION_DLQ, durable=True),
+  Queue(ACTIONS_DLQ, routing_key=ACTIONS_DLQ, durable=True),
+
   # Main Q
-  Queue('orchestration_queue', routing_key='orchestration.#', durable=True,
+  Queue(ORCHESTRATION_QUEUE, routing_key='orchestration.#', durable=True,
         queue_arguments={
           'x-dead-letter-exchange': '',
-          'x-dead-letter-routing-key': 'orchestration_dlq'
+          'x-dead-letter-routing-key': ORCHESTRATION_DLQ
         }),
 
-  Queue('actions_queue', routing_key='actions.#', durable=True,
+  Queue(ACTIONS_QUEUE, routing_key='actions.#', durable=True,
         queue_arguments={
           'x-dead-letter-exchange': '',
-          'x-dead-letter-routing-key': 'actions_dlq'
+          'x-dead-letter-routing-key': ACTIONS_DLQ
         }),
 )
 

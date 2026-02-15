@@ -1,0 +1,7 @@
+from enum import Enum
+
+
+class EventType(Enum):
+  START_WORKFLOW = "START_WORKFLOW"
+  STEP_COMPLETE = "STEP_COMPLETE"
+  STEP_FAILED = "STEP_FAILED"

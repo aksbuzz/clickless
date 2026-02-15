@@ -19,7 +19,7 @@ services:
       replicas: 1
 
   relay:
-    command: python src/relay/main.py
+    command: python src/relay/entrypoint/main.py
     volumes:
       - ./src:/app/src
 

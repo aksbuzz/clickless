@@ -45,6 +45,9 @@ services:
     build: .
     env_file: .env
     command: gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
+    environment:
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
     ports:
       - "8000:8000"
     depends_on:
@@ -86,12 +89,21 @@ services:
   relay:
     build: .
     env_file: .env
-    command: python src/relay/main.py
+    command: python src/relay/entrypoint/main.py
     depends_on:
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - app-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
     networks:
       - app-network
 
