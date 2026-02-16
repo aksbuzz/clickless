@@ -222,6 +222,7 @@ function ActionConfig({
 
   function handleConnectionChange(connectionId: string) {
     if (connectionId === '') {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { connection_id: _, ...rest } = definition;
       onChange({ ...rest } as ActionStep);
     } else {

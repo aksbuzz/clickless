@@ -14,8 +14,10 @@ export function StepList({ connectors, connections, steps, onChange }: StepListP
   function addStep() {
     const idx = steps.length + 1;
     let key = `step_${idx}`;
+    let counter = 1;
     while (allStepKeys.includes(key)) {
-      key = `step_${idx}_${Date.now()}`;
+      key = `step_${idx}_${counter}`;
+      counter++;
     }
     const newStep: DraftStep = {
       key,

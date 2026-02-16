@@ -78,14 +78,15 @@ class PostgresWorkflowRepository(WorkflowRepositoryPort):
 
   def add_step_execution(self, step: WorkflowStepExecution) -> None:
     self.cursor.execute("""
-      INSERT INTO workflow_step_executions (id, instance_id, step_name, status, 
-        attempts, started_at, input_data)
-      VALUES (%s, %s, %s, %s, %s, %s, %s)
+      INSERT INTO workflow_step_executions (id, instance_id, step_name, status,
+        attempts, started_at, input_data, request_id)
+      VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """, (
         step.id, step.instance_id, step.step_name, step.status.value,
-        step.attempts, step.started_at, json.dumps(step.input_data) if step.input_data else None
+        step.attempts, step.started_at, json.dumps(step.input_data) if step.input_data else None,
+        step.request_id
     ))
-    log.info("Added new step execution", instance_id=step.instance_id, step=step.step_name)
+    log.info("Added new step execution", instance_id=step.instance_id, step=step.step_name, request_id=step.request_id)
 
 
   def save_step_execution(self, step: WorkflowStepExecution) -> None:
@@ -105,15 +106,15 @@ class PostgresWorkflowRepository(WorkflowRepositoryPort):
     ))
     log.info("Saved step execution state", step_execution_id=step.id, status=step.status.value)
 
-  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None) -> None:
+  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None, request_id: str = None) -> None:
     if publish_at is None:
       publish_at = datetime.now(timezone.utc)
-          
+
     self.cursor.execute("""
-      INSERT INTO outbox (destination, payload, publish_at, created_at)
-      VALUES (%s, %s, %s, NOW())
-    """, (destination, json.dumps(payload), publish_at))
-    log.info("Scheduled message for outbox", destination=destination)
+      INSERT INTO outbox (destination, payload, publish_at, request_id, created_at)
+      VALUES (%s, %s, %s, %s, NOW())
+    """, (destination, json.dumps(payload), publish_at, request_id))
+    log.info("Scheduled message for outbox", destination=destination, request_id=request_id)
 
 
 class PostgresUnitOfWork(BasePostgresUnitOfWork, UnitOfWorkPort):

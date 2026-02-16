@@ -19,7 +19,7 @@ class RelayService:
     try:
       cur = conn.cursor()
       cur.execute(
-        "SELECT id, destination, payload "
+        "SELECT id, destination, payload, request_id "
         "FROM outbox "
         "WHERE processed_at IS NULL AND publish_at <= NOW() "
         "ORDER BY publish_at "
@@ -40,7 +40,17 @@ class RelayService:
           continue
 
         try:
-          self.celery_app.send_task(name=task_name, args=[msg["payload"]], queue=msg["destination"])
+          # Pass request_id as Celery header for distributed tracing
+          headers = {}
+          if msg.get("request_id"):
+            headers["request_id"] = msg["request_id"]
+
+          self.celery_app.send_task(
+            name=task_name,
+            args=[msg["payload"]],
+            queue=msg["destination"],
+            headers=headers
+          )
           processed_ids.append(str(msg["id"]))
         except Exception as e:
           log.error("Failed to send task; will retry later.", msg_id=str(msg["id"]), destination=msg["destination"], error=str(e))

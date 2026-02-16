@@ -31,7 +31,7 @@ class WorkflowRepositoryPort(ABC):
     pass
   
   @abstractmethod
-  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None) -> None:
+  def schedule_message(self, destination: str, payload: dict, publish_at: Optional[datetime] = None, request_id: str = None) -> None:
     """Schedules a message in the outbox for later publishing."""
     pass
 

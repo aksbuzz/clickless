@@ -1,9 +1,19 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import uuid
+import structlog
 
 from src.shared.logging_config import log
 from src.shared.constants import ORCHESTRATION_QUEUE, ACTIONS_QUEUE
+from src.shared.metrics import (
+    workflow_started_total,
+    workflow_completed_total,
+    workflow_duration_seconds,
+    step_execution_total,
+    step_retry_total,
+    step_duration_seconds,
+    workflow_errors_total
+)
 
 from src.orchestration.domain.models import EventType, RetryPolicy, WorkflowVersion, WorkflowStatus, WorkflowInstance, WorkflowStepExecution, StepExecutionStatus
 from src.orchestration.domain.events import WorkflowEvent
@@ -71,9 +81,13 @@ class OrchestrationService:
       instance.current_step_attempts += 1
       self.uow.workflow.save_instance(instance)
 
+      # Record retry metric
+      step_retry_total.labels(workflow_name=version.workflow_name, step_name=event.step_name).inc()
+
       publish_time = datetime.now(timezone.utc) + timedelta(seconds=retry_policy.delay_seconds)
       action_id = step_def.get('action_id', event.step_name)
       config = step_def.get('config', {})
+      request_id = structlog.contextvars.get_contextvars().get("request_id")
       payload = {
         "action": action_id,
         "step_name": event.step_name,
@@ -83,12 +97,18 @@ class OrchestrationService:
       connection_id = step_def.get('connection_id')
       if connection_id:
         payload["connection_id"] = connection_id
-      self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time)
+      self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time, request_id)
     else:
       log.error("Step failed permanently", step=event.step_name)
       instance.status = WorkflowStatus.FAILED
       self.uow.workflow.save_instance(instance)
-      
+
+      # Record workflow failure metrics
+      duration = (datetime.now(timezone.utc) - instance.created_at).total_seconds()
+      workflow_completed_total.labels(workflow_name=version.workflow_name, status="failed").inc()
+      workflow_duration_seconds.labels(workflow_name=version.workflow_name, status="failed").observe(duration)
+      workflow_errors_total.labels(workflow_name=version.workflow_name, error_type="step_failure").inc()
+
       step_execution.status = StepExecutionStatus.FAILED
       step_execution.completed_at = datetime.now(timezone.utc)
       step_execution.error_details = str(event.data.get("error", "Unknown error"))
@@ -123,6 +143,22 @@ class OrchestrationService:
       step_execution.output_data = result_data
       self.uow.workflow.save_step_execution(step_execution)
 
+      # Record step execution metrics
+      version_result = self.uow.workflow.find_instance(instance.id)
+      if version_result:
+        _, version = version_result
+        duration = (step_execution.completed_at - step_execution.started_at).total_seconds()
+        step_execution_total.labels(
+          workflow_name=version.workflow_name,
+          step_name=step_name,
+          status="completed"
+        ).inc()
+        step_duration_seconds.labels(
+          workflow_name=version.workflow_name,
+          step_name=step_name,
+          action_type="unknown"  # Could be extracted from step definition
+        ).observe(duration)
+
     # Merge data into the main instance
     if result_data:
       instance.data.update(result_data)
@@ -133,6 +169,11 @@ class OrchestrationService:
       instance.status = WorkflowStatus.COMPLETED
       instance.current_step = None
       self.uow.workflow.save_instance(instance)
+
+      # Record workflow completion metrics
+      duration = (datetime.now(timezone.utc) - instance.created_at).total_seconds()
+      workflow_completed_total.labels(workflow_name=version.workflow_name, status="completed").inc()
+      workflow_duration_seconds.labels(workflow_name=version.workflow_name, status="completed").observe(duration)
       return
     
     instance.status = WorkflowStatus.RUNNING
@@ -140,7 +181,12 @@ class OrchestrationService:
     instance.current_step_attempts = 1
     self.uow.workflow.save_instance(instance)
 
+    # Record workflow started metric (only on first step)
+    if instance.current_step == version.definition.get("start_at"):
+      workflow_started_total.labels(workflow_name=version.workflow_name).inc()
+
     # Create new step execution
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
     new_step_execution = WorkflowStepExecution(
       id=str(uuid.uuid4()),
       instance_id=instance.id,
@@ -149,6 +195,7 @@ class OrchestrationService:
       attempts=1,
       started_at=datetime.now(timezone.utc),
       input_data=instance.data,
+      request_id=request_id,
     )
     self.uow.workflow.add_step_execution(new_step_execution)
 
@@ -168,6 +215,7 @@ class OrchestrationService:
       return
 
     # Dispatch action to worker
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
     action_id = step_def.get('action_id', step_name)
     config = step_def.get('config', {})
     payload = {
@@ -180,21 +228,22 @@ class OrchestrationService:
     if connection_id:
       payload["connection_id"] = connection_id
     publish_time = datetime.now(timezone.utc)
-    self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time)
+    self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time, request_id)
 
   def _handle_delay_step(self, instance_id: str, step_name: str, step_def: dict) -> None:
     duration = int(step_def.get("duration_seconds", 60))
     resume_at = datetime.now(timezone.utc) + timedelta(seconds=duration)
     log.info("Pausing for delay", step=step_name, resume_at=resume_at.isoformat())
 
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
     step_execution = self.uow.workflow.find_current_step_execution(instance_id, step_name)
     if step_execution:
       step_execution.status = StepExecutionStatus.COMPLETED
       step_execution.completed_at = datetime.now(timezone.utc)
       self.uow.workflow.save_step_execution(step_execution)
-    
+
     payload = {"type": EventType.STEP_COMPLETE.value, "instance_id": instance_id, "step_name": step_name}
-    self.uow.workflow.schedule_message(ORCHESTRATION_QUEUE, payload, resume_at)
+    self.uow.workflow.schedule_message(ORCHESTRATION_QUEUE, payload, resume_at, request_id)
 
 
   def _handle_wait_step(self, instance: WorkflowInstance, step_name: str, step_def: dict) -> None:
@@ -207,6 +256,7 @@ class OrchestrationService:
     # If a timeout is configured, schedule a STEP_FAILED as a safety net
     timeout_seconds = step_def.get('timeout_seconds')
     if timeout_seconds:
+      request_id = structlog.contextvars.get_contextvars().get("request_id")
       timeout_at = datetime.now(timezone.utc) + timedelta(seconds=int(timeout_seconds))
       payload = {
         "type": EventType.STEP_FAILED.value,
@@ -214,7 +264,7 @@ class OrchestrationService:
         "step_name": step_name,
         "data": {"error": f"Wait step '{step_name}' timed out after {timeout_seconds}s"},
       }
-      self.uow.workflow.schedule_message(ORCHESTRATION_QUEUE, payload, timeout_at)
+      self.uow.workflow.schedule_message(ORCHESTRATION_QUEUE, payload, timeout_at, request_id)
       log.info("Waiting for external event (with timeout)", step=step_name, timeout_seconds=timeout_seconds)
     else:
       log.info("Waiting for external event (no timeout)", step=step_name)

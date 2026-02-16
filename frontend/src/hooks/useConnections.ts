@@ -6,25 +6,34 @@ export function useConnections(connectorId?: string) {
   const [connections, setConnections] = useState<Connection[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   const load = useCallback(() => {
-    setLoading(true);
-    api.getConnections(connectorId)
-      .then((data) => {
-        setConnections(data);
-        setError(null);
-      })
-      .catch((e) => {
-        setError(e instanceof Error ? e.message : 'Failed to load connections');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [connectorId]);
+    setRefetchTrigger((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+
+    api.getConnections(connectorId)
+      .then((data) => {
+        if (!cancelled) {
+          setConnections(data);
+          setError(null);
+          setLoading(false);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to load connections');
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connectorId, refetchTrigger]);
 
   return { connections, loading, error, refetch: load };
 }

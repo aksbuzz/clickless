@@ -47,15 +47,27 @@ from celery.signals import task_prerun, task_postrun
 @task_prerun.connect
 def setup_celery_logging(sender=None, task_id=None, task=None, args=None, kwargs=None, **other):
   structlog.contextvars.clear_contextvars()
-  
+
+  # Extract request_id from task headers for distributed tracing
+  request_id = task.request.get("request_id") if hasattr(task.request, "get") else None
+
   message = args[0] if args else {}
   instance_id = message.get("instance_id")
-  
-  structlog.contextvars.bind_contextvars(
-    celery_task_id=task_id,
-    celery_task_name=task.name,
-    instance_id=instance_id
-  )
+
+  # Also check message payload for request_id (fallback)
+  if not request_id:
+    request_id = message.get("request_id")
+
+  context_vars = {
+    "celery_task_id": task_id,
+    "celery_task_name": task.name,
+    "instance_id": instance_id,
+  }
+
+  if request_id:
+    context_vars["request_id"] = request_id
+
+  structlog.contextvars.bind_contextvars(**context_vars)
 
 @task_postrun.connect
 def cleanup_celery_logging(sender=None, task_id=None, **kwargs):

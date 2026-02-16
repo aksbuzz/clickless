@@ -24,7 +24,8 @@ export function Modal({ open, onClose, title, children }: ModalProps) {
     <dialog
       ref={dialogRef}
       onClose={onClose}
-      className="rounded-lg shadow-xl backdrop:bg-black/40 p-0 w-full max-w-lg"
+      className="rounded-lg shadow-xl backdrop:bg-black/40 p-0 w-full max-w-lg m-auto"
+      style={{ position: 'fixed' }}
     >
       <div className="p-6">
         <div className="flex items-center justify-between mb-4">

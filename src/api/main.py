@@ -1,12 +1,15 @@
 import os
+import time
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from uuid import UUID, uuid4
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from src.shared.logging_config import log
+from src.shared.metrics import http_requests_total, http_request_duration_seconds
 from src.shared.connectors.registry import registry as connector_registry
 import src.shared.connectors.definitions  # noqa: F401 — registers connectors on import
 from src.shared.triggers.registry import TriggerHandlerRegistry
@@ -41,11 +44,30 @@ trigger_registry.register("trello", TrelloTriggerHandler())
 
 
 @app.middleware("http")
-async def logging_middleware(request: Request, call_next):
+async def logging_and_metrics_middleware(request: Request, call_next):
+  # Set up logging context
   structlog.contextvars.clear_contextvars()
   request_id = str(uuid4())
   structlog.contextvars.bind_contextvars(request_id=request_id)
+
+  # Track metrics
+  start_time = time.time()
   response = await call_next(request)
+  duration = time.time() - start_time
+
+  # Record metrics (skip /metrics endpoint itself)
+  if request.url.path != "/metrics":
+    http_requests_total.labels(
+      method=request.method,
+      endpoint=request.url.path,
+      status_code=response.status_code
+    ).inc()
+
+    http_request_duration_seconds.labels(
+      method=request.method,
+      endpoint=request.url.path
+    ).observe(duration)
+
   structlog.contextvars.clear_contextvars()
   return response
 
@@ -75,15 +97,48 @@ class UpdateConnectionPayload(BaseModel):
   config: dict
 
 
-# --- Health ---
+# --- Health & Metrics ---
+
+@app.get("/metrics")
+def metrics():
+  """Prometheus metrics endpoint."""
+  return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 @app.get("/health")
 def health():
+  """
+  Comprehensive health check endpoint.
+
+  Returns:
+  - 200: All systems healthy
+  - 503: One or more systems unhealthy (degraded)
+  """
   try:
     result = service.health_check()
+    # Return 503 if any component is unhealthy
+    if result.get("status") != "healthy":
+      raise HTTPException(status_code=503, detail=result)
     return result
+  except HTTPException:
+    raise
+  except Exception as e:
+    log.error("Health check failed", exc_info=True)
+    raise HTTPException(status_code=503, detail={"status": "unhealthy", "error": str(e)})
+
+
+@app.get("/ready")
+def ready():
+  """
+  Lightweight readiness check (database only).
+  Suitable for Kubernetes readiness probes.
+  """
+  try:
+    with service.uow:
+      service.uow.repo.cursor.execute("SELECT 1")
+    return {"status": "ready"}
   except Exception:
-    raise HTTPException(status_code=503, detail="Database unavailable")
+    raise HTTPException(status_code=503, detail={"status": "not_ready"})
 
 
 # --- Connector Discovery ---

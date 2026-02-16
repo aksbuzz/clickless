@@ -25,6 +25,7 @@ pika = "*"
 boto3 = "*"
 structlog = "*"
 httpx = "*"
+prometheus-client = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"

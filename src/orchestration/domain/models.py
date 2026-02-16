@@ -60,6 +60,7 @@ class WorkflowStepExecution:
   input_data: Optional[Dict[str, Any]] = None
   output_data: Optional[Dict[str, Any]] = None
   error_details: Optional[str] = None
+  request_id: Optional[str] = None
 
 
 @dataclass

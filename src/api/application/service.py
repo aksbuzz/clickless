@@ -1,4 +1,5 @@
 import json
+import structlog
 
 from src.shared.logging_config import log
 from src.shared.constants import ORCHESTRATION_QUEUE
@@ -11,6 +12,7 @@ from src.api.domain.exceptions import (
   InvalidStateError, DuplicateWorkflowError, ValidationError,
   ConnectionNotFoundError, DuplicateConnectionError,
 )
+from src.api.domain.health import HealthChecker
 from src.shared.triggers.models import TriggerEvent
 from src.shared.triggers.ports import TriggerHandlerPort
 
@@ -23,9 +25,9 @@ class WorkflowManagementService:
     self.connector_registry = connector_registry
 
   def health_check(self) -> dict:
+    """Perform comprehensive health check of all dependencies."""
     with self.uow:
-      self.uow.repo.cursor.execute("SELECT 1")
-    return {"status": "ok"}
+      return HealthChecker.comprehensive_check(self.uow.repo.cursor)
 
   def list_connectors(self) -> list:
     from dataclasses import asdict
@@ -88,24 +90,30 @@ class WorkflowManagementService:
   def start_workflow(self, definition_name: str, data: dict) -> dict:
     log.info("Starting workflow", definition=definition_name)
 
+    # Get request_id from contextvars for distributed tracing
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+
     with self.uow:
       row = self.uow.repo.find_active_version_by_name(definition_name)
       if not row:
         raise WorkflowNotFoundError("Workflow definition not found")
 
       version_id = str(row["id"])
-      instance_id = self.uow.repo.create_instance(version_id, "pending", data)
+      instance_id = self.uow.repo.create_instance(version_id, "pending", data, request_id)
 
       self.uow.repo.schedule_outbox_message(
         ORCHESTRATION_QUEUE,
-        {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id}
+        {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
       )
 
-    log.info("Workflow started", instance_id=instance_id)
+    log.info("Workflow started", instance_id=instance_id, request_id=request_id)
     return {"message": "Workflow started", "instance_id": instance_id}
 
   def trigger_webhook(self, workflow_name: str, data: dict) -> dict:
     log.info("Webhook received", workflow=workflow_name)
+
+    # Get request_id from contextvars for distributed tracing
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
 
     with self.uow:
       row = self.uow.repo.find_active_version_by_name(workflow_name)
@@ -118,14 +126,14 @@ class WorkflowManagementService:
         raise InvalidStateError("Workflow does not accept webhook triggers")
 
       version_id = str(row["id"])
-      instance_id = self.uow.repo.create_instance(version_id, "pending", data)
+      instance_id = self.uow.repo.create_instance(version_id, "pending", data, request_id)
 
       self.uow.repo.schedule_outbox_message(
         ORCHESTRATION_QUEUE,
-        {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id}
+        {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
       )
 
-    log.info("Workflow triggered via webhook", instance_id=instance_id)
+    log.info("Workflow triggered via webhook", instance_id=instance_id, request_id=request_id)
     return {"message": "Workflow triggered", "instance_id": instance_id}
 
   # --- Instance Operations ---
@@ -189,6 +197,9 @@ class WorkflowManagementService:
   def process_external_trigger(self, event: TriggerEvent, handler: TriggerHandlerPort) -> list:
     log.info("Processing external trigger", connector_id=event.connector_id, trigger_id=event.trigger_id)
 
+    # Get request_id from contextvars (may be None for external triggers)
+    request_id = structlog.contextvars.get_contextvars().get("request_id")
+
     started = []
     with self.uow:
       versions = self.uow.repo.find_active_versions_by_trigger(event.connector_id, event.trigger_id)
@@ -205,15 +216,15 @@ class WorkflowManagementService:
           continue
 
         version_id = str(version_row["id"])
-        instance_id = self.uow.repo.create_instance(version_id, "pending", event.data)
+        instance_id = self.uow.repo.create_instance(version_id, "pending", event.data, request_id)
 
         self.uow.repo.schedule_outbox_message(
           ORCHESTRATION_QUEUE,
-          {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id}
+          {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
         )
 
         started.append({"workflow_name": version_row["workflow_name"], "instance_id": instance_id})
-        log.info("Workflow triggered", workflow=version_row["workflow_name"], instance_id=instance_id)
+        log.info("Workflow triggered", workflow=version_row["workflow_name"], instance_id=instance_id, request_id=request_id)
 
     return started
 

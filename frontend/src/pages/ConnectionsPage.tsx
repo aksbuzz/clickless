@@ -5,7 +5,7 @@ import { ConnectorIcon } from '../components/ConnectorIcon';
 import { SchemaForm } from '../components/SchemaForm';
 import { Modal } from '../components/Modal';
 import { api } from '../api';
-import type { Connector, ConnectionDetail } from '../types';
+import type { ConnectionDetail } from '../types';
 
 export function ConnectionsPage() {
   const { connectors } = useConnectors();

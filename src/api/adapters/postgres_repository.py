@@ -72,11 +72,11 @@ class PostgresAPIRepository:
       (workflow_id,)
     )
 
-  def create_instance(self, version_id: str, status: str, data: dict) -> str:
+  def create_instance(self, version_id: str, status: str, data: dict, request_id: str = None) -> str:
     self.cursor.execute(
-      "INSERT INTO workflow_instances (workflow_version_id, status, data) "
-      "VALUES (%s, %s, %s) RETURNING id;",
-      (version_id, status, json.dumps(data))
+      "INSERT INTO workflow_instances (workflow_version_id, status, data, request_id) "
+      "VALUES (%s, %s, %s, %s) RETURNING id;",
+      (version_id, status, json.dumps(data), request_id)
     )
     return str(self.cursor.fetchone()["id"])
 
