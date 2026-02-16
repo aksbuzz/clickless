@@ -57,5 +57,6 @@ def execute_action(self, message: dict):
     instance_id=message.get("instance_id"),
     step_name=message.get("step_name"),
     config=message.get("config"),
+    connection_id=message.get("connection_id"),
     task_context=self,
   )

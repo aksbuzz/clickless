@@ -6,6 +6,7 @@ import { WorkflowBuilderPage } from './pages/WorkflowBuilderPage';
 import { InstancesPage } from './pages/InstancesPage';
 import { InstanceDetailPage } from './pages/InstanceDetailPage';
 import { ConnectorsPage } from './pages/ConnectorsPage';
+import { ConnectionsPage } from './pages/ConnectionsPage';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="instances" element={<InstancesPage />} />
         <Route path="instances/:id" element={<InstanceDetailPage />} />
         <Route path="connectors" element={<ConnectorsPage />} />
+        <Route path="connections" element={<ConnectionsPage />} />
       </Route>
     </Routes>
   );

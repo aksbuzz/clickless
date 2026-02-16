@@ -80,6 +80,9 @@ class OrchestrationService:
         "instance_id": instance.id,
         "config": config,
       }
+      connection_id = step_def.get('connection_id')
+      if connection_id:
+        payload["connection_id"] = connection_id
       self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time)
     else:
       log.error("Step failed permanently", step=event.step_name)
@@ -173,6 +176,9 @@ class OrchestrationService:
       "instance_id": instance.id,
       "config": config,
     }
+    connection_id = step_def.get('connection_id')
+    if connection_id:
+      payload["connection_id"] = connection_id
     publish_time = datetime.now(timezone.utc)
     self.uow.workflow.schedule_message(ACTIONS_QUEUE, payload, publish_time)
 

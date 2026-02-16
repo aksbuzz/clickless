@@ -13,6 +13,12 @@ class InvalidStateError(WorkflowError):
 class DuplicateWorkflowError(WorkflowError):
   pass
 
+class ConnectionNotFoundError(WorkflowError):
+  pass
+
+class DuplicateConnectionError(WorkflowError):
+  pass
+
 class ValidationError(WorkflowError):
   def __init__(self, errors: list):
     self.errors = errors

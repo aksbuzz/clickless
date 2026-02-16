@@ -4,6 +4,7 @@ const navItems = [
   { to: '/workflows', label: 'Workflows' },
   { to: '/instances', label: 'Instances' },
   { to: '/connectors', label: 'Connectors' },
+  { to: '/connections', label: 'Connections' },
 ];
 
 export function Layout() {

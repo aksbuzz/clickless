@@ -17,7 +17,7 @@ class WorkerService:
   def __init__(self, registry: ActionRegistryPort):
     self.registry = registry
 
-  def execute_action(self, action_name: str, instance_id: str, step_name: str = None, config: dict = None, task_context=None):
+  def execute_action(self, action_name: str, instance_id: str, step_name: str = None, config: dict = None, connection_id: str = None, task_context=None):
     step_name = step_name or action_name
     config = config or {}
     log.info("Executing action", action=action_name, step=step_name, instance_id=instance_id)
@@ -44,6 +44,17 @@ class WorkerService:
       instance_row = cur.fetchone()
       if not instance_row:
         raise Reject(f"No instance found for id: {instance_id}", requeue=False)
+
+      # Resolve connection credentials if connection_id is provided
+      if connection_id:
+        cur.execute("SELECT config FROM connections WHERE id = %s", (connection_id,))
+        conn_row = cur.fetchone()
+        if conn_row and conn_row["config"]:
+          merged = dict(conn_row["config"])
+          merged.update(config)
+          config = merged
+        else:
+          log.warning("Connection not found, proceeding without it", connection_id=connection_id, action=action_name)
 
       # Find handler
       handler = self.registry.get_handler(action_name)

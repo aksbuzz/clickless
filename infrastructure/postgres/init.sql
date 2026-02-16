@@ -70,6 +70,17 @@ CREATE INDEX idx_versions_trigger ON workflow_versions (
   (definition->'trigger'->>'trigger_id')
 ) WHERE is_active = true;
 
+CREATE TABLE connections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  connector_id VARCHAR(100) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  config JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE (connector_id, name)
+);
+CREATE INDEX idx_connections_connector ON connections (connector_id);
+
 
 -- Auto-update trigger for updated_at columns
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -86,6 +97,10 @@ CREATE TRIGGER trg_workflows_updated_at
 
 CREATE TRIGGER trg_workflow_instances_updated_at
   BEFORE UPDATE ON workflow_instances
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER trg_connections_updated_at
+  BEFORE UPDATE ON connections
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 

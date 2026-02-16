@@ -1,13 +1,14 @@
 import { ActionStepEditor } from './ActionStepEditor';
-import type { Connector, DraftStep, StepDefinition } from '../../types';
+import type { Connector, Connection, DraftStep, StepDefinition } from '../../types';
 
 interface StepListProps {
   connectors: Connector[];
+  connections: Connection[];
   steps: DraftStep[];
   onChange: (steps: DraftStep[]) => void;
 }
 
-export function StepList({ connectors, steps, onChange }: StepListProps) {
+export function StepList({ connectors, connections, steps, onChange }: StepListProps) {
   const allStepKeys = steps.map((s) => s.key);
 
   function addStep() {
@@ -121,6 +122,7 @@ export function StepList({ connectors, steps, onChange }: StepListProps) {
             )}
             <ActionStepEditor
               connectors={connectors}
+              connections={connections}
               stepKey={step.key}
               definition={step.definition}
               allStepKeys={allStepKeys}

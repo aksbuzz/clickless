@@ -1,8 +1,9 @@
 import type {
   Workflow, Instance, InstanceDetail, StepExecution,
-  Connector, WorkflowDetail,
+  Connector, WorkflowDetail, Connection, ConnectionDetail,
   CreateWorkflowResponse, CreateVersionResponse,
   RunWorkflowResponse, CancelInstanceResponse, SendEventResponse,
+  CreateConnectionResponse, MessageResponse,
 } from './types';
 
 async function get<T>(path: string): Promise<T> {
@@ -25,6 +26,38 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
       : Array.isArray(detail)
         ? detail.join('; ')
         : `${res.status} ${res.statusText}`;
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+async function put<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const detail = errBody?.detail;
+    const message = typeof detail === 'string'
+      ? detail
+      : Array.isArray(detail)
+        ? detail.join('; ')
+        : `${res.status} ${res.statusText}`;
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(path, { method: 'DELETE' });
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    const detail = errBody?.detail;
+    const message = typeof detail === 'string'
+      ? detail
+      : `${res.status} ${res.statusText}`;
     throw new Error(message);
   }
   return res.json();
@@ -60,4 +93,16 @@ export const api = {
   // Connectors
   getConnectors: () =>
     get<Connector[]>('/api/connectors'),
+
+  // Connections
+  getConnections: (connectorId?: string) =>
+    get<Connection[]>(`/api/connections${connectorId ? `?connector_id=${connectorId}` : ''}`),
+  getConnection: (id: string) =>
+    get<ConnectionDetail>(`/api/connections/${id}`),
+  createConnection: (connectorId: string, name: string, config: object) =>
+    post<CreateConnectionResponse>('/api/connections', { connector_id: connectorId, name, config }),
+  updateConnection: (id: string, name: string, config: object) =>
+    put<MessageResponse>(`/api/connections/${id}`, { name, config }),
+  deleteConnection: (id: string) =>
+    del<MessageResponse>(`/api/connections/${id}`),
 };

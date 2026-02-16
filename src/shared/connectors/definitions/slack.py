@@ -5,6 +5,13 @@ slack_connector = Connector(
     id="slack",
     name="Slack",
     description="Send messages and receive events from Slack.",
+    connection_schema={
+        "type": "object",
+        "properties": {
+            "webhook_url": {"type": "string", "title": "Webhook URL", "description": "Slack Incoming Webhook URL"},
+        },
+        "required": ["webhook_url"],
+    },
     triggers=[
         TriggerDefinition(
             id="slack_message_received",

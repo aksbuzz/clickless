@@ -85,6 +85,21 @@ export interface Connector {
   description: string;
   triggers: TriggerDefinition[];
   actions: ActionDefinition[];
+  connection_schema: ConfigSchema;
+}
+
+// --- Connection types ---
+
+export interface Connection {
+  id: string;
+  connector_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectionDetail extends Connection {
+  config: Record<string, unknown>;
 }
 
 // --- Workflow detail (from GET /workflows/:id) ---
@@ -117,6 +132,7 @@ export interface ActionStep {
   type: "action";
   connector_id: string;
   action_id: string;
+  connection_id?: string;
   config: Record<string, unknown>;
   next: string;
   retry?: { max_attempts: number; delay_seconds: number };
@@ -192,4 +208,12 @@ export interface SendEventResponse {
   message: string;
   instance_id: string;
   step: string;
+}
+
+export interface CreateConnectionResponse {
+  connection_id: string;
+}
+
+export interface MessageResponse {
+  message: string;
 }

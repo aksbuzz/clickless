@@ -19,6 +19,7 @@ from src.api.application.service import WorkflowManagementService
 from src.api.domain.exceptions import (
   WorkflowNotFoundError, InstanceNotFoundError,
   InvalidStateError, DuplicateWorkflowError, ValidationError,
+  ConnectionNotFoundError, DuplicateConnectionError,
 )
 
 app = FastAPI()
@@ -26,7 +27,7 @@ app = FastAPI()
 app.add_middleware(
   CORSMiddleware,
   allow_origins=["http://localhost:5173"],
-  allow_methods=["GET", "POST"],
+  allow_methods=["GET", "POST", "PUT", "DELETE"],
   allow_headers=["*"],
 )
 
@@ -64,6 +65,15 @@ class CreateVersionPayload(BaseModel):
 class EventPayload(BaseModel):
   data: dict = {}
 
+class CreateConnectionPayload(BaseModel):
+  connector_id: str
+  name: str
+  config: dict
+
+class UpdateConnectionPayload(BaseModel):
+  name: str
+  config: dict
+
 
 # --- Health ---
 
@@ -81,6 +91,49 @@ def health():
 @app.get("/connectors")
 def list_connectors():
   return service.list_connectors()
+
+
+# --- Connections ---
+
+@app.post("/connections", status_code=201)
+def create_connection(payload: CreateConnectionPayload):
+  try:
+    return service.create_connection(payload.connector_id, payload.name, payload.config)
+  except ValidationError as e:
+    raise HTTPException(status_code=400, detail={"validation_errors": e.errors})
+  except DuplicateConnectionError as e:
+    raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/connections")
+def list_connections(connector_id: str = None):
+  return service.list_connections(connector_id)
+
+
+@app.get("/connections/{connection_id}")
+def get_connection(connection_id: UUID):
+  try:
+    return service.get_connection(str(connection_id))
+  except ConnectionNotFoundError:
+    raise HTTPException(status_code=404, detail="Connection not found")
+
+
+@app.put("/connections/{connection_id}")
+def update_connection(connection_id: UUID, payload: UpdateConnectionPayload):
+  try:
+    return service.update_connection(str(connection_id), payload.name, payload.config)
+  except ConnectionNotFoundError:
+    raise HTTPException(status_code=404, detail="Connection not found")
+  except DuplicateConnectionError as e:
+    raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.delete("/connections/{connection_id}")
+def delete_connection(connection_id: UUID):
+  try:
+    return service.delete_connection(str(connection_id))
+  except ConnectionNotFoundError:
+    raise HTTPException(status_code=404, detail="Connection not found")
 
 
 # --- Workflow CRUD ---

@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import { api } from '../api';
 import { useConnectors } from '../hooks/useConnectors';
+import { useConnections } from '../hooks/useConnections';
 import { TriggerStep } from '../components/builder/TriggerStep';
 import { StepList } from '../components/builder/StepList';
 import { ReviewStep } from '../components/builder/ReviewStep';
@@ -69,6 +70,7 @@ export function WorkflowBuilderPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { connectors, loading: connectorsLoading } = useConnectors();
+  const { connections } = useConnections();
 
   const isEdit = !!id;
   const [wizardStep, setWizardStep] = useState(0);
@@ -215,6 +217,7 @@ export function WorkflowBuilderPage() {
         {wizardStep === 1 && (
           <StepList
             connectors={connectors}
+            connections={connections ?? []}
             steps={draft.steps}
             onChange={handleStepsChange}
           />

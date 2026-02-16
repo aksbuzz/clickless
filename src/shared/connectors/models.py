@@ -24,3 +24,4 @@ class Connector:
     description: str
     triggers: list[TriggerDefinition] = field(default_factory=list)
     actions: list[ActionDefinition] = field(default_factory=list)
+    connection_schema: dict = field(default_factory=dict)

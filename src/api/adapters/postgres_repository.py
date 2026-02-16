@@ -145,6 +145,51 @@ class PostgresAPIRepository:
     )
     return [dict(r) for r in self.cursor.fetchall()]
 
+  # --- Connections ---
+
+  def create_connection(self, connector_id: str, name: str, config: dict) -> str:
+    self.cursor.execute(
+      "INSERT INTO connections (connector_id, name, config) "
+      "VALUES (%s, %s, %s) RETURNING id;",
+      (connector_id, name, json.dumps(config))
+    )
+    return str(self.cursor.fetchone()["id"])
+
+  def list_connections(self, connector_id: str = None) -> list:
+    if connector_id:
+      self.cursor.execute(
+        "SELECT id, connector_id, name, created_at, updated_at "
+        "FROM connections WHERE connector_id = %s ORDER BY name;",
+        (connector_id,)
+      )
+    else:
+      self.cursor.execute(
+        "SELECT id, connector_id, name, created_at, updated_at "
+        "FROM connections ORDER BY connector_id, name;"
+      )
+    return [dict(r) for r in self.cursor.fetchall()]
+
+  def get_connection(self, connection_id: str) -> Optional[dict]:
+    self.cursor.execute(
+      "SELECT id, connector_id, name, config, created_at, updated_at "
+      "FROM connections WHERE id = %s;",
+      (connection_id,)
+    )
+    row = self.cursor.fetchone()
+    return dict(row) if row else None
+
+  def update_connection(self, connection_id: str, name: str, config: dict) -> None:
+    self.cursor.execute(
+      "UPDATE connections SET name = %s, config = %s WHERE id = %s;",
+      (name, json.dumps(config), connection_id)
+    )
+
+  def delete_connection(self, connection_id: str) -> None:
+    self.cursor.execute(
+      "DELETE FROM connections WHERE id = %s;",
+      (connection_id,)
+    )
+
   def find_active_versions_by_trigger(self, connector_id: str, trigger_id: str) -> list:
     self.cursor.execute(
       "SELECT v.id, w.name AS workflow_name, v.definition "

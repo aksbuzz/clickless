@@ -9,6 +9,7 @@ from src.api.adapters.postgres_unit_of_work import PostgresAPIUnitOfWork
 from src.api.domain.exceptions import (
   WorkflowNotFoundError, InstanceNotFoundError,
   InvalidStateError, DuplicateWorkflowError, ValidationError,
+  ConnectionNotFoundError, DuplicateConnectionError,
 )
 from src.shared.triggers.models import TriggerEvent
 from src.shared.triggers.ports import TriggerHandlerPort
@@ -222,3 +223,57 @@ class WorkflowManagementService:
       if not instance:
         raise InstanceNotFoundError("Instance not found")
       return self.uow.repo.list_step_executions(instance_id)
+
+  # --- Connections ---
+
+  def create_connection(self, connector_id: str, name: str, config: dict) -> dict:
+    connector = self.connector_registry.get_connector(connector_id)
+    if not connector:
+      raise ValidationError([f"Unknown connector '{connector_id}'"])
+    if not connector.connection_schema:
+      raise ValidationError([f"Connector '{connector_id}' does not support connections"])
+
+    with self.uow:
+      try:
+        connection_id = self.uow.repo.create_connection(connector_id, name, config)
+      except Exception as e:
+        if "unique" in str(e).lower():
+          raise DuplicateConnectionError(f"Connection name '{name}' already exists for connector '{connector_id}'")
+        raise
+
+    log.info("Connection created", connection_id=connection_id, connector=connector_id)
+    return {"connection_id": connection_id}
+
+  def list_connections(self, connector_id: str = None) -> list:
+    with self.uow:
+      return self.uow.repo.list_connections(connector_id)
+
+  def get_connection(self, connection_id: str) -> dict:
+    with self.uow:
+      connection = self.uow.repo.get_connection(connection_id)
+    if not connection:
+      raise ConnectionNotFoundError("Connection not found")
+    return connection
+
+  def update_connection(self, connection_id: str, name: str, config: dict) -> dict:
+    with self.uow:
+      existing = self.uow.repo.get_connection(connection_id)
+      if not existing:
+        raise ConnectionNotFoundError("Connection not found")
+      try:
+        self.uow.repo.update_connection(connection_id, name, config)
+      except Exception as e:
+        if "unique" in str(e).lower():
+          raise DuplicateConnectionError(f"Connection name '{name}' already exists for this connector")
+        raise
+    log.info("Connection updated", connection_id=connection_id)
+    return {"message": "Connection updated"}
+
+  def delete_connection(self, connection_id: str) -> dict:
+    with self.uow:
+      existing = self.uow.repo.get_connection(connection_id)
+      if not existing:
+        raise ConnectionNotFoundError("Connection not found")
+      self.uow.repo.delete_connection(connection_id)
+    log.info("Connection deleted", connection_id=connection_id)
+    return {"message": "Connection deleted"}

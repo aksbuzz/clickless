@@ -5,6 +5,13 @@ github_connector = Connector(
     id="github",
     name="GitHub",
     description="Create issues, add comments, and receive webhook events from GitHub.",
+    connection_schema={
+        "type": "object",
+        "properties": {
+            "token": {"type": "string", "title": "Personal Access Token"},
+        },
+        "required": ["token"],
+    },
     triggers=[
         TriggerDefinition(
             id="github_issue_opened",

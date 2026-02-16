@@ -5,6 +5,13 @@ postgresql_connector = Connector(
     id="postgresql",
     name="PostgreSQL",
     description="Execute queries and commands against a PostgreSQL database.",
+    connection_schema={
+        "type": "object",
+        "properties": {
+            "connection_string": {"type": "string", "title": "Connection String", "description": "PostgreSQL connection URI (e.g., postgresql://user:pass@host:5432/db)"},
+        },
+        "required": ["connection_string"],
+    },
     triggers=[],
     actions=[
         ActionDefinition(

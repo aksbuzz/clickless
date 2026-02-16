@@ -5,6 +5,14 @@ trello_connector = Connector(
     id="trello",
     name="Trello",
     description="Create cards, add comments, and receive webhook events from Trello.",
+    connection_schema={
+        "type": "object",
+        "properties": {
+            "api_key": {"type": "string", "title": "API Key"},
+            "api_token": {"type": "string", "title": "API Token"},
+        },
+        "required": ["api_key", "api_token"],
+    },
     triggers=[
         TriggerDefinition(
             id="trello_card_created",

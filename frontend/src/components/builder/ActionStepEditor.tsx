@@ -1,9 +1,10 @@
 import { ConnectorIcon } from '../ConnectorIcon';
 import { SchemaForm } from '../SchemaForm';
-import type { Connector, StepDefinition, ActionStep } from '../../types';
+import type { Connector, Connection, StepDefinition, ActionStep, ConfigSchema } from '../../types';
 
 interface ActionStepEditorProps {
   connectors: Connector[];
+  connections: Connection[];
   stepKey: string;
   definition: StepDefinition;
   allStepKeys: string[];
@@ -45,6 +46,7 @@ function makeDefault(type: string): StepDefinition {
 
 export function ActionStepEditor({
   connectors,
+  connections,
   stepKey,
   definition,
   allStepKeys,
@@ -89,6 +91,7 @@ export function ActionStepEditor({
       {definition.type === 'action' && (
         <ActionConfig
           connectors={actionConnectors}
+          connections={connections}
           definition={definition}
           nextOptions={nextOptions}
           onChange={onChange}
@@ -161,19 +164,49 @@ export function ActionStepEditor({
   );
 }
 
+function hasConnectionSupport(connector: Connector): boolean {
+  return !!(
+    connector.connection_schema?.properties &&
+    Object.keys(connector.connection_schema.properties).length > 0
+  );
+}
+
+function filterSchemaForConnection(schema: ConfigSchema, connectionSchema: ConfigSchema): ConfigSchema {
+  const connectionKeys = new Set(Object.keys(connectionSchema.properties ?? {}));
+  return {
+    ...schema,
+    properties: Object.fromEntries(
+      Object.entries(schema.properties ?? {}).filter(([key]) => !connectionKeys.has(key))
+    ),
+    required: (schema.required ?? []).filter((key) => !connectionKeys.has(key)),
+  };
+}
+
 function ActionConfig({
   connectors,
+  connections,
   definition,
   nextOptions,
   onChange,
 }: {
   connectors: Connector[];
+  connections: Connection[];
   definition: ActionStep;
   nextOptions: string[];
   onChange: (d: StepDefinition) => void;
 }) {
   const selectedConnector = connectors.find((c) => c.id === definition.connector_id);
   const selectedAction = selectedConnector?.actions.find((a) => a.id === definition.action_id);
+
+  const supportsConnections = selectedConnector && hasConnectionSupport(selectedConnector);
+  const connectorConnections = connections.filter((c) => c.connector_id === definition.connector_id);
+
+  // Build filtered schema that hides connection fields when a connection is selected
+  const displaySchema = selectedAction
+    ? definition.connection_id && selectedConnector
+      ? filterSchemaForConnection(selectedAction.config_schema, selectedConnector.connection_schema)
+      : selectedAction.config_schema
+    : undefined;
 
   function handleConnectorChange(connectorId: string) {
     const connector = connectors.find((c) => c.id === connectorId);
@@ -182,8 +215,18 @@ function ActionConfig({
       ...definition,
       connector_id: connectorId,
       action_id: firstAction?.id ?? '',
+      connection_id: undefined,
       config: {},
     });
+  }
+
+  function handleConnectionChange(connectionId: string) {
+    if (connectionId === '') {
+      const { connection_id: _, ...rest } = definition;
+      onChange({ ...rest } as ActionStep);
+    } else {
+      onChange({ ...definition, connection_id: connectionId });
+    }
   }
 
   return (
@@ -208,6 +251,28 @@ function ActionConfig({
         </div>
       </div>
 
+      {supportsConnections && (
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Connection</label>
+          <select
+            value={definition.connection_id ?? ''}
+            onChange={(e) => handleConnectionChange(e.target.value)}
+            className="border border-gray-300 rounded px-3 py-1.5 text-sm w-full"
+          >
+            <option value="">(None - enter credentials manually)</option>
+            {connectorConnections.map((conn) => (
+              <option key={conn.id} value={conn.id}>{conn.name}</option>
+            ))}
+          </select>
+          {connectorConnections.length === 0 && (
+            <p className="text-xs text-gray-400 mt-1">
+              No connections for {selectedConnector!.name}.{' '}
+              <a href="/connections" className="text-blue-500 hover:underline">Create one</a>
+            </p>
+          )}
+        </div>
+      )}
+
       {selectedConnector && (
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">Action</label>
@@ -223,11 +288,16 @@ function ActionConfig({
         </div>
       )}
 
-      {selectedAction && (
+      {selectedAction && displaySchema && (
         <div className="bg-gray-50 rounded border border-gray-200 p-3">
           <p className="text-xs text-gray-500 mb-2">{selectedAction.description}</p>
+          {definition.connection_id && (
+            <p className="text-xs text-green-600 mb-2">
+              Credentials provided by connection.
+            </p>
+          )}
           <SchemaForm
-            schema={selectedAction.config_schema}
+            schema={displaySchema}
             values={(definition.config as Record<string, unknown>) ?? {}}
             onChange={(config) => onChange({ ...definition, config })}
           />
