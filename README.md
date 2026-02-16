@@ -1,124 +1,261 @@
-# ClickLess - Workflow Automation App
+# Workflow Automation App
 
-## Concepts
+A tool to automate your business tasks.
 
-*   **Workflow Definition**: A template for a business process, defined as a DAG of steps. Stored in the database.
+---
 
-    ```
-    {
-        "description": "A simple invoice approval flow.",
-        "start_at": "fetch_invoice",
-        "steps": {
-            "fetch_invoice": { "next": "validate_invoice" },
-            "validate_invoice": { "next": "generate_report" },
-            "generate_report": {
-                "type": "delay",
-                "duration_seconds": 15,
-                "next": "archive_report" 
-            },
-            "archive_report": { 
-            "next": "end",
-            "retry": {
-                "max_attempts": 3,
-                "delay_seconds": 5
-                }
-            }
-        }
-    }
-    ```
+## What is this?
 
-*   **Workflow Instance**: A running instance of a workflow definition. It maintains its own state (`data` blob), history, and current step.
-*   **Action**: A single unit of work (e.g., call an API, query a database).
-*   **Primitive Handler**: A reusable piece of code that knows *how* to perform a type of task (e.g., make an HTTP request, upload to S3).
-*   **Event-Driven**: The system progresses through state transitions by passing messages asynchronously between services.
+This app helps you create **workflows**. A workflow is a list of tasks that run automatically.
 
-## Architecture
+**Example:**
+- Get an invoice → Check if it's correct → Create a report → Save the report
 
-![alt text](docs/image.png)
+---
 
+## Main Features
 
-## Technology Stack
+✅ **Create workflows** - Build step-by-step tasks
+✅ **Connect apps** - Link with GitHub, Slack, databases
+✅ **Run automatically** - Start workflows with events
+✅ **See progress** - Track what is happening
+✅ **Visual builder** - Easy drag and drop interface
 
-*   **Language**: Python 3.10+
-*   **Framework**: Celery (for task queuing and workers)
-*   **Database**: PostgreSQL
-*   **Message Broker**: RabbitMQ
-*   **Caching/Celery Backend**: Redis
-*   **Containerization**: Docker & Docker Compose
+---
 
-## Developer Setup
+## How to Install
 
-#### Prerequisites
-*   Docker and Docker Compose
-*   Python 3.10+
-*   `poetry`
+### What you need:
 
-#### 1. Clone the Repository
+- **Docker** and **Docker Compose**
+- **Python 3.12** or newer
+- **Poetry** (Python package manager)
+
+### Step 1: Download the code
+
 ```bash
 git clone <your-repo-url>
-cd clickless
+cd workflow_automate
 ```
 
-#### 2. Configure Environment Variables
-Copy the example environment file and customize.
+### Step 2: Setup environment
+
+Copy the example file:
+
 ```bash
 cp .env.example .env
 ```
 
-#### 3. Build and Start Services
-Build the Docker images and start all the required services (Postgres, RabbitMQ, Redis, and the application services).
+Open `.env` file and add your settings.
+
+### Step 3: Start the app
+
+Run this command:
+
 ```bash
 docker-compose up --build -d
 ```
 
-## Running the Application
+Wait 1-2 minutes. Docker will download and start everything.
 
-Once the setup is complete, the application services will be running inside Docker containers.
+---
 
-*   **Orchestrator Service**: Listens to `orchestration_queue`.
-*   **Worker Service**: Listens to `actions_queue`.
-*   **Message Relay**: Periodically scans the `outbox` table.
-*   **API Service**: To interact with the application.
+## How to Use
 
-#### Interacting with the API (Example)
-You can start a new workflow by sending a request to the API endpoint.
+### Open the app
 
-```bash
-curl -X POST http://localhost:8000/workflows/{workflow_unique_name}/run \
-     -H "Content-Type: application/json" \
-     -d '{
-       "data": { "invoice_id": "inv_12345" }
-     }'
-```
+After starting, open your web browser:
 
-#### Viewing Logs
-To see the logs from all services in real-time:
+- **Frontend (Website)**: http://localhost:3000
+- **API (Backend)**: http://localhost:8000
+
+### Create a workflow
+
+1. Go to http://localhost:3000
+2. Click "**New Workflow**"
+3. Add steps (actions)
+4. Connect the steps
+5. Save your workflow
+6. Click "**Run**" to start it
+
+---
+
+## What's Inside?
+
+The app has these parts:
+
+| Part | What it does |
+|------|--------------|
+| **Frontend** | Website you see and click |
+| **API** | Receives your requests |
+| **Engine** | Controls the workflows |
+| **Worker** | Does the actual tasks |
+| **Database** | Saves all data |
+| **Message Queue** | Sends messages between parts |
+
+---
+
+## Common Tasks
+
+### See logs (what is happening)
+
+See all logs:
 ```bash
 docker-compose logs -f
 ```
-To view logs for a specific service:
+
+See logs for one part only:
 ```bash
 docker-compose logs -f worker
 ```
 
-## Defining Workflows & Actions
+### Stop the app
 
-1.  **Define an Action (Database)**: To create a new action (e.g., "fetch-github-issues"), add a new row to the `action_definitions` table. This involves providing the `handler_type` (e.g., `http_request`) and the specific `config` JSON for that action.
-2.  **Define a Workflow (Database)**: Define the sequence of steps and their connections in the `workflow_definitions` table, referencing the action `name`s.
+```bash
+docker-compose down
+```
 
-## Testing
+### Stop and delete everything
 
-The project is configured with `pytest`.
+```bash
+docker-compose down -v
+```
 
-To run all tests:
+⚠️ **Warning**: This deletes your database!
+
+### Restart the app
+
+```bash
+docker-compose restart
+```
+
+---
+
+## Technology Used
+
+- **Python** - Programming language
+- **FastAPI** - Web framework
+- **PostgreSQL** - Database
+- **RabbitMQ** - Message system
+- **Redis** - Fast cache
+- **React** - Website framework
+- **Docker** - Container system
+- **Celery** - Task queue
+
+---
+
+## Project Structure
+
+```
+workflow_automate/
+├── frontend/          # Website code (React)
+├── src/
+│   ├── api/          # API endpoints
+│   ├── engine/       # Workflow controller
+│   ├── worker/       # Task executor
+│   ├── relay/        # Message sender
+│   └── shared/       # Common code
+├── infrastructure/    # Database setup
+├── docker-compose.yml # Docker configuration
+└── .env              # Your settings
+```
+
+---
+
+## Examples
+
+### Example: Simple Workflow
+
+```json
+{
+  "description": "Send a welcome email",
+  "start_at": "send_email",
+  "steps": {
+    "send_email": {
+      "type": "action",
+      "connector_id": "http",
+      "action_id": "post_request",
+      "next": "end"
+    }
+  }
+}
+```
+
+### Example: Workflow with Branch
+
+```json
+{
+  "description": "Check invoice amount",
+  "start_at": "check_amount",
+  "steps": {
+    "check_amount": {
+      "type": "branch",
+      "condition": {
+        "field": "amount",
+        "operator": "gt",
+        "value": 1000
+      },
+      "on_true": "approve",
+      "on_false": "reject"
+    },
+    "approve": {
+      "type": "action",
+      "next": "end"
+    },
+    "reject": {
+      "type": "action",
+      "next": "end"
+    }
+  }
+}
+```
+
+
+### Run tests
+
 ```bash
 pytest
 ```
 
-## TODO
+### Add a new connector
 
-1. Add Monitoring & Observability
-2. UI: Workflow Designer
-3. Webhook Handler
-4. Scheduler service to listen for workflows to process
-5. Orchestration heartbeat for stuck worker processes
+1. Go to `src/shared/connectors/definitions/`
+2. Create a new file (example: `myapp.py`)
+3. Define your connector
+4. Register it
+
+### Database changes
+
+Edit this file:
+```
+infrastructure/postgres/init.sql
+```
+
+Then restart:
+```bash
+docker-compose down -v
+docker-compose up --build -d
+```
+
+---
+
+## Important Notes
+
+📌 Always use the **.env** file for passwords and secrets
+📌 Don't share your **.env** file
+📌 Check **logs** if something goes wrong
+📌 The frontend is at **port 3000**
+📌 The API is at **port 8000**
+
+---
+
+## Future Plans
+
+- [ ] Add more connectors
+- [ ] UX improvements
+
+---
+
+## License
+
+MIT License - You can use this freely.
