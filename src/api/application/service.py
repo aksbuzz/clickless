@@ -2,7 +2,7 @@ import json
 import structlog
 
 from src.shared.logging_config import log
-from src.shared.constants import ORCHESTRATION_QUEUE
+from src.shared.constants import ORCHESTRATION_QUEUE, ACTIONS_QUEUE
 from src.shared.event_types import EventType
 from src.shared.connectors.registry import ConnectorRegistry
 
@@ -227,6 +227,65 @@ class WorkflowManagementService:
         log.info("Workflow triggered", workflow=version_row["workflow_name"], instance_id=instance_id, request_id=request_id)
 
     return started
+
+  def recover_stuck_instances(self, stale_seconds: int = 60) -> list:
+    """Find and re-queue events for stuck workflow instances."""
+    recovered = []
+
+    with self.uow:
+      stuck = self.uow.repo.find_stuck_instances(stale_seconds)
+
+      for instance in stuck:
+        instance_id = str(instance["id"])
+        status = instance["status"]
+        current_step = instance["current_step"]
+        definition = instance["definition"]
+
+        if status == "pending":
+          # Re-queue START_WORKFLOW
+          self.uow.repo.schedule_outbox_message(
+            ORCHESTRATION_QUEUE,
+            {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id}
+          )
+          recovered.append({"instance_id": instance_id, "action": "re-queued START_WORKFLOW"})
+          log.info("Recovery: re-queued START_WORKFLOW", instance_id=instance_id)
+
+        elif status == "running" and current_step:
+          step_exec = self.uow.repo.find_latest_step_execution(instance_id, current_step)
+
+          if step_exec and step_exec["status"] == "completed":
+            # Worker finished but engine failed on transition — re-queue STEP_COMPLETE
+            self.uow.repo.schedule_outbox_message(
+              ORCHESTRATION_QUEUE,
+              {
+                "type": EventType.STEP_COMPLETE.value,
+                "instance_id": instance_id,
+                "step_name": current_step,
+                "data": step_exec.get("output_data") or instance.get("data") or {},
+              }
+            )
+            recovered.append({"instance_id": instance_id, "action": f"re-queued STEP_COMPLETE for {current_step}"})
+            log.info("Recovery: re-queued STEP_COMPLETE", instance_id=instance_id, step=current_step)
+
+          else:
+            # Step execution still pending — re-dispatch action to worker
+            step_def = definition.get("steps", {}).get(current_step, {})
+            action_id = step_def.get("action_id", current_step)
+            config = step_def.get("config", {})
+            payload = {
+              "action": action_id,
+              "step_name": current_step,
+              "instance_id": instance_id,
+              "config": config,
+            }
+            connection_id = step_def.get("connection_id")
+            if connection_id:
+              payload["connection_id"] = connection_id
+            self.uow.repo.schedule_outbox_message(ACTIONS_QUEUE, payload)
+            recovered.append({"instance_id": instance_id, "action": f"re-dispatched action for {current_step}"})
+            log.info("Recovery: re-dispatched action", instance_id=instance_id, step=current_step)
+
+    return recovered
 
   def get_instance_steps(self, instance_id: str) -> list:
     with self.uow:

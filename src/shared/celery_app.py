@@ -41,6 +41,13 @@ app.conf.task_queues = (
 
 app.conf.task_reject_on_worker_lost = True
 
+app.conf.beat_schedule = {
+  'recover-stuck-instances': {
+    'task': 'engine.recover_stuck',
+    'schedule': 30.0,
+  },
+}
+
 import structlog
 from celery.signals import task_prerun, task_postrun
 

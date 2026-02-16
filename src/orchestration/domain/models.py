@@ -27,13 +27,14 @@ class StepExecutionStatus(Enum):
 class WorkflowVersion:
   id: str
   definition: Dict[str, Any]
+  workflow_name: str = "unknown"
 
   def get_start_step(self) -> str:
     return self.definition.get("start_at")
-  
+
   def get_next_step(self, current_step: str) -> Optional[str]:
     return self.definition.get("steps", {}).get(current_step, {}).get("next")
-  
+
   def get_step_definition(self, step_name: str) -> Optional[Dict[str, Any]]:
     return self.definition.get("steps", {}).get(step_name)
 
@@ -46,6 +47,8 @@ class WorkflowInstance:
   current_step: Optional[str] = None
   current_step_attempts: int = 0
   data: Dict[str, Any] = field(default_factory=dict)
+  created_at: Optional[datetime] = None
+  updated_at: Optional[datetime] = None
 
 
 @dataclass

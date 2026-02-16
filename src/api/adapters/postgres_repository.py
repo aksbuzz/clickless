@@ -145,6 +145,34 @@ class PostgresAPIRepository:
     )
     return [dict(r) for r in self.cursor.fetchall()]
 
+  # --- Recovery ---
+
+  def find_stuck_instances(self, stale_seconds: int = 60) -> list:
+    """Find instances stuck in pending/running that haven't been updated recently."""
+    self.cursor.execute(
+      "SELECT i.id, i.status, i.current_step, i.data, "
+      "v.definition, w.name AS workflow_name "
+      "FROM workflow_instances i "
+      "JOIN workflow_versions v ON i.workflow_version_id = v.id "
+      "JOIN workflows w ON v.workflow_id = w.id "
+      "WHERE i.status IN ('pending', 'running') "
+      "AND i.updated_at < NOW() - INTERVAL '%s seconds' "
+      "ORDER BY i.created_at ASC",
+      (stale_seconds,)
+    )
+    return [dict(r) for r in self.cursor.fetchall()]
+
+  def find_latest_step_execution(self, instance_id: str, step_name: str) -> dict:
+    self.cursor.execute(
+      "SELECT id, step_name, status, output_data "
+      "FROM workflow_step_executions "
+      "WHERE instance_id = %s AND step_name = %s "
+      "ORDER BY started_at DESC LIMIT 1;",
+      (instance_id, step_name)
+    )
+    row = self.cursor.fetchone()
+    return dict(row) if row else None
+
   # --- Connections ---
 
   def create_connection(self, connector_id: str, name: str, config: dict) -> str:

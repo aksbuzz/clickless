@@ -297,6 +297,15 @@ def send_event(instance_id: UUID, payload: EventPayload):
     raise HTTPException(status_code=409, detail=str(e))
 
 
+# --- Recovery ---
+
+@app.post("/admin/recover")
+def recover_stuck_instances(stale_seconds: int = 60):
+  """Detect and recover stuck workflow instances."""
+  recovered = service.recover_stuck_instances(stale_seconds)
+  return {"message": f"Recovered {len(recovered)} instance(s)", "recovered": recovered}
+
+
 # --- External Trigger Webhooks ---
 
 def _get_connector_config(connector_id: str) -> dict:

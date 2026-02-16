@@ -19,28 +19,33 @@ class PostgresWorkflowRepository(WorkflowRepositoryPort):
     self.cursor.execute("""
       SELECT
         i.id, i.workflow_version_id, i.status, i.current_step,
-        i.current_step_attempts, i.data, v.definition
+        i.current_step_attempts, i.data, i.created_at, i.updated_at,
+        v.definition, w.name as workflow_name
       FROM workflow_instances i
       JOIN workflow_versions v ON i.workflow_version_id = v.id
+      JOIN workflows w ON v.workflow_id = w.id
       WHERE i.id = %s
     """, (instance_id,))
 
     row = self.cursor.fetchone()
     if not row:
       return None
-  
+
     instance = WorkflowInstance(
       id=str(row['id']),
       workflow_version_id=str(row['workflow_version_id']),
       status=WorkflowStatus(row['status']),
       current_step=row['current_step'],
       current_step_attempts=row['current_step_attempts'] or 0,
-      data=row['data'] or {}
+      data=row['data'] or {},
+      created_at=row['created_at'],
+      updated_at=row['updated_at']
     )
 
     version = WorkflowVersion(
       id=str(row['workflow_version_id']),
-      definition=row['definition']
+      definition=row['definition'],
+      workflow_name=row['workflow_name']
     )
 
     return instance, version
@@ -118,7 +123,10 @@ class PostgresWorkflowRepository(WorkflowRepositoryPort):
 
 
 class PostgresUnitOfWork(BasePostgresUnitOfWork, UnitOfWorkPort):
-  workflow: PostgresWorkflowRepository
 
   def _create_repositories(self, cursor):
-    self.workflow = PostgresWorkflowRepository(cursor)
+    self._local.workflow = PostgresWorkflowRepository(cursor)
+
+  @property
+  def workflow(self):
+    return self._local.workflow

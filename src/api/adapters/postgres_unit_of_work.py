@@ -3,7 +3,10 @@ from src.api.adapters.postgres_repository import PostgresAPIRepository
 
 
 class PostgresAPIUnitOfWork(BasePostgresUnitOfWork):
-  repo: PostgresAPIRepository
 
   def _create_repositories(self, cursor):
-    self.repo = PostgresAPIRepository(cursor)
+    self._local.repo = PostgresAPIRepository(cursor)
+
+  @property
+  def repo(self):
+    return self._local.repo
