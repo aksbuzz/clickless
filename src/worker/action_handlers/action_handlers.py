@@ -3,13 +3,14 @@ import httpx
 
 from src.shared.logging_config import log
 
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 DEFAULT_TIMEOUT = 30
 
 
-class FetchInvoiceHandler(ActionHandlerPort):
+@action("fetch_invoice")
+class FetchInvoiceHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info(f"Fetching invoice...", instance_id=instance_id)
     
@@ -20,7 +21,8 @@ class FetchInvoiceHandler(ActionHandlerPort):
     
     return ActionResult(ActionStatus.SUCCESS, data)
 
-class ValidateInvoiceHandler(ActionHandlerPort):
+@action("validate_invoice")
+class ValidateInvoiceHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info(f"Validating invoice...", instance_id=instance_id)
     amount = data.get('invoice_details', {}).get('amount', 0)
@@ -34,7 +36,8 @@ class ValidateInvoiceHandler(ActionHandlerPort):
       data['error'] = "Invoice amount is too low for this test."
       return ActionResult(ActionStatus.FAILURE, data)
 
-class GenerateReportHandler(ActionHandlerPort):
+@action("generate_report")
+class GenerateReportHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info(f"Generating PDF report...", instance_id=instance_id)
     report_content = f"Invoice Report for {data['invoice_details']['customer']}\nAmount: ${data['invoice_details']['amount']}"
@@ -42,7 +45,8 @@ class GenerateReportHandler(ActionHandlerPort):
     data['report_content'] = report_content
     return ActionResult(ActionStatus.SUCCESS, data)
 
-class ArchiveReportHandler(ActionHandlerPort):
+@action("archive_report")
+class ArchiveReportHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info("Archiving report to S3...", instance_id=instance_id)
 
@@ -55,20 +59,23 @@ class ArchiveReportHandler(ActionHandlerPort):
 
     return ActionResult(ActionStatus.SUCCESS, data)
 
-class InitialStepHandler(ActionHandlerPort):
+@action("initial_step")
+class InitialStepHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info(f"Executing the initial step.", instance_id=instance_id)
     data['initial_step_done'] = True
     return ActionResult(ActionStatus.SUCCESS, data)
 
-class FinalStepHandler(ActionHandlerPort):
+@action("final_step")
+class FinalStepHandler:
   def execute(self, instance_id, data, **kwargs):
     log.info(f"Executing the final step after the delay.", instance_id=instance_id)
     data['final_step_done'] = True
     return ActionResult(ActionStatus.SUCCESS, data)
 
 
-class LogHandler(ActionHandlerPort):
+@action("log")
+class LogHandler:
   def execute(self, instance_id, data, config=None, **kwargs):
     config = config or {}
     message = config.get("message", "Log step executed")
@@ -76,7 +83,8 @@ class LogHandler(ActionHandlerPort):
     return ActionResult(ActionStatus.SUCCESS, data)
 
 
-class TransformDataHandler(ActionHandlerPort):
+@action("transform_data")
+class TransformDataHandler:
   def execute(self, instance_id, data, config=None, **kwargs):
     config = config or {}
     # Set fields
@@ -89,7 +97,8 @@ class TransformDataHandler(ActionHandlerPort):
     return ActionResult(ActionStatus.SUCCESS, data)
 
 
-class HttpRequestHandler(ActionHandlerPort):
+@action("http_request")
+class HttpRequestHandler:
   def execute(self, instance_id, data, config=None, **kwargs):
     config = config or {}
     url = config.get("url", "")
@@ -119,7 +128,8 @@ class HttpRequestHandler(ActionHandlerPort):
       return ActionResult(ActionStatus.FAILURE, data, error_message=f"Request error: {e}")
 
 
-class SendWebhookHandler(ActionHandlerPort):
+@action("send_webhook")
+class SendWebhookHandler:
   def execute(self, instance_id, data, config=None, **kwargs):
     config = config or {}
     url = config.get("url", "")

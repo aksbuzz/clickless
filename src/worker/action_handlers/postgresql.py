@@ -3,11 +3,12 @@ import psycopg2.extras
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 
-class PostgresQueryHandler(ActionHandlerPort):
+@action("postgresql_query")
+class PostgresQueryHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         connection_string = config.get("connection_string", "")
@@ -38,7 +39,8 @@ class PostgresQueryHandler(ActionHandlerPort):
             return ActionResult(ActionStatus.FAILURE, data, error_message=f"Unexpected error: {e}")
 
 
-class PostgresExecuteHandler(ActionHandlerPort):
+@action("postgresql_execute")
+class PostgresExecuteHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         connection_string = config.get("connection_string", "")

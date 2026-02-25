@@ -33,3 +33,21 @@ def return_connection(conn):
         get_pool().putconn(conn)
     except Exception:
         pass
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def db_cursor():
+    """Context manager that provides a cursor with automatic commit/rollback and connection return."""
+    conn = get_connection()
+    cur = conn.cursor()
+    try:
+        yield cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        return_connection(conn)

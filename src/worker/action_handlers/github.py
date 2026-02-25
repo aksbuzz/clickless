@@ -2,13 +2,14 @@ import httpx
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 GITHUB_API_BASE = "https://api.github.com"
 
 
-class GitHubCreateIssueHandler(ActionHandlerPort):
+@action("github_create_issue")
+class GitHubCreateIssueHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         token = config.get("token", "")
@@ -49,7 +50,8 @@ class GitHubCreateIssueHandler(ActionHandlerPort):
             return ActionResult(ActionStatus.FAILURE, data, error_message=f"GitHub request error: {e}")
 
 
-class GitHubAddCommentHandler(ActionHandlerPort):
+@action("github_add_comment")
+class GitHubAddCommentHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         token = config.get("token", "")

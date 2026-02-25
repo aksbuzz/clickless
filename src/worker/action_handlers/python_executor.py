@@ -2,8 +2,8 @@ import threading
 from typing import Any, Dict
 
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 ALLOWED_MODULES = {"math", "json", "re", "datetime"}
 MAX_TIMEOUT = 300
@@ -29,7 +29,8 @@ def _make_restricted_builtins():
     return safe
 
 
-class PythonExecuteHandler(ActionHandlerPort):
+@action("python_execute")
+class PythonExecuteHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = config or {}
         code = config.get("code", "")

@@ -2,13 +2,14 @@ import httpx
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 TRELLO_API_BASE = "https://api.trello.com/1"
 
 
-class TrelloCreateCardHandler(ActionHandlerPort):
+@action("trello_create_card")
+class TrelloCreateCardHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         api_key = config.get("api_key", "")
@@ -40,7 +41,8 @@ class TrelloCreateCardHandler(ActionHandlerPort):
             return ActionResult(ActionStatus.FAILURE, data, error_message=f"Trello request error: {e}")
 
 
-class TrelloAddCommentHandler(ActionHandlerPort):
+@action("trello_add_comment")
+class TrelloAddCommentHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         api_key = config.get("api_key", "")

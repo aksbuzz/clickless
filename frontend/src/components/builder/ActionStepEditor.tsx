@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { ConnectorIcon } from '../ConnectorIcon';
 import { SchemaForm } from '../SchemaForm';
+import type { AvailableVariable } from './StepList';
 import type { Connector, Connection, StepDefinition, ActionStep, ConfigSchema } from '../../types';
 
 interface ActionStepEditorProps {
@@ -8,6 +10,7 @@ interface ActionStepEditorProps {
   stepKey: string;
   definition: StepDefinition;
   allStepKeys: string[];
+  availableVariables: AvailableVariable[];
   onKeyChange: (newKey: string) => void;
   onChange: (definition: StepDefinition) => void;
   onRemove: () => void;
@@ -31,16 +34,17 @@ const OPERATORS = [
   { value: 'exists', label: 'exists' },
 ];
 
-function makeDefault(type: string): StepDefinition {
+function makeDefault(type: string, existingOutputs?: string[]): StepDefinition {
+  const outputs = existingOutputs?.length ? existingOutputs : undefined;
   switch (type) {
     case 'branch':
-      return { type: 'branch', condition: { field: '', operator: 'eq', value: '' }, on_true: 'end', on_false: 'end' };
+      return { type: 'branch', condition: { field: '', operator: 'eq', value: '' }, on_true: 'end', on_false: 'end', outputs };
     case 'delay':
-      return { type: 'delay', duration_seconds: 5, next: 'end' };
+      return { type: 'delay', duration_seconds: 5, next: 'end', outputs };
     case 'wait_for_event':
-      return { type: 'wait_for_event', event_name: '', next: 'end' };
+      return { type: 'wait_for_event', event_name: '', next: 'end', outputs };
     default:
-      return { type: 'action', connector_id: '', action_id: '', config: {}, next: 'end' };
+      return { type: 'action', connector_id: '', action_id: '', config: {}, next: 'end', outputs };
   }
 }
 
@@ -50,6 +54,7 @@ export function ActionStepEditor({
   stepKey,
   definition,
   allStepKeys,
+  availableVariables,
   onKeyChange,
   onChange,
   onRemove,
@@ -58,7 +63,7 @@ export function ActionStepEditor({
   const nextOptions = [...allStepKeys.filter((k) => k !== stepKey), 'end'];
 
   function handleTypeChange(newType: string) {
-    onChange(makeDefault(newType));
+    onChange(makeDefault(newType, definition.outputs));
   }
 
   return (
@@ -158,6 +163,115 @@ export function ActionStepEditor({
             options={nextOptions}
             onChange={(next) => onChange({ ...definition, next })}
           />
+        </div>
+      )}
+
+      <OutputsEditor
+        outputs={definition.outputs ?? []}
+        onChange={(outputs) =>
+          onChange({ ...definition, outputs: outputs.length ? outputs : undefined } as StepDefinition)
+        }
+      />
+
+      {availableVariables.length > 0 && (
+        <VariableHints variables={availableVariables} />
+      )}
+    </div>
+  );
+}
+
+function OutputsEditor({
+  outputs,
+  onChange,
+}: {
+  outputs: string[];
+  onChange: (outputs: string[]) => void;
+}) {
+  const [newOutput, setNewOutput] = useState('');
+
+  function handleAdd() {
+    const trimmed = newOutput.trim().replace(/\s+/g, '_');
+    if (trimmed && !outputs.includes(trimmed)) {
+      onChange([...outputs, trimmed]);
+      setNewOutput('');
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAdd();
+    }
+  }
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <label className="block text-xs font-medium text-gray-500 mb-1">
+        Outputs
+        <span className="font-normal text-gray-400 ml-1">
+          (keys this step writes to workflow data)
+        </span>
+      </label>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        {outputs.map((key) => (
+          <span
+            key={key}
+            className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs border border-purple-200"
+          >
+            {key}
+            <button
+              onClick={() => onChange(outputs.filter((o) => o !== key))}
+              className="text-purple-400 hover:text-purple-700"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={newOutput}
+          onChange={(e) => setNewOutput(e.target.value.replace(/\s+/g, '_'))}
+          onKeyDown={handleKeyDown}
+          placeholder="e.g. ticket_id"
+          className="border border-gray-300 rounded px-3 py-1 text-xs w-40"
+        />
+        <button
+          onClick={handleAdd}
+          disabled={!newOutput.trim()}
+          className="text-xs text-purple-600 hover:text-purple-700 disabled:text-gray-400"
+        >
+          + Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function VariableHints({ variables }: { variables: AvailableVariable[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="mt-3 pt-3 border-t border-gray-100">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="text-xs text-amber-700 hover:text-amber-800 font-medium"
+      >
+        {expanded ? '▾' : '▸'} Available variables ({variables.length})
+      </button>
+      {expanded && (
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {variables.map((v) => (
+            <span
+              key={`${v.source}-${v.key}`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-800 rounded text-xs border border-amber-200 font-mono"
+              title={`Source: ${v.source}`}
+            >
+              {`{{${v.key}}}`}
+              <span className="text-amber-500 font-sans text-[10px]">{v.source}</span>
+            </span>
+          ))}
         </div>
       )}
     </div>

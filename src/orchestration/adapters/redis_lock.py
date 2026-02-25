@@ -1,9 +1,7 @@
 from src.shared.logging_config import log
 
-from src.orchestration.domain.ports import LockPort
 
-
-class RedisLockService(LockPort):
+class RedisLockService:
   def __init__(self, redis_client):
     self.redis = redis_client
     self.locks = {}

@@ -3,17 +3,18 @@ import { useParams, useNavigate, Link } from 'react-router';
 import { api } from '../api';
 import { useConnectors } from '../hooks/useConnectors';
 import { useConnections } from '../hooks/useConnections';
+import { InputsEditor } from '../components/builder/InputsEditor';
 import { TriggerStep } from '../components/builder/TriggerStep';
 import { StepList } from '../components/builder/StepList';
 import { ReviewStep } from '../components/builder/ReviewStep';
 import type {
-  WorkflowDraft, WorkflowDefinition, TriggerConfig, DraftStep, StepDefinition,
+  WorkflowDraft, WorkflowDefinition, TriggerConfig, DraftStep, InputDefinition, StepDefinition,
 } from '../types';
 
-const WIZARD_STEPS = ['Trigger', 'Steps', 'Review'] as const;
+const WIZARD_STEPS = ['Inputs', 'Trigger', 'Steps', 'Review'] as const;
 
 function emptyDraft(): WorkflowDraft {
-  return { name: '', description: '', trigger: null, steps: [] };
+  return { name: '', description: '', inputs: [], trigger: null, steps: [] };
 }
 
 function draftToDefinition(draft: WorkflowDraft): WorkflowDefinition {
@@ -23,6 +24,7 @@ function draftToDefinition(draft: WorkflowDraft): WorkflowDefinition {
   }
   return {
     description: draft.description || undefined,
+    inputs: draft.inputs.length > 0 ? draft.inputs : undefined,
     trigger: draft.trigger!,
     start_at: draft.steps[0]?.key ?? 'end',
     steps,
@@ -61,6 +63,7 @@ function definitionToDraft(name: string, def: WorkflowDefinition): WorkflowDraft
   return {
     name,
     description: def.description ?? '',
+    inputs: def.inputs ?? [],
     trigger: def.trigger,
     steps: ordered,
   };
@@ -100,6 +103,10 @@ export function WorkflowBuilderPage() {
   if (connectorsLoading) return <p className="text-gray-500">Loading connectors...</p>;
   if (!connectors) return <p className="text-red-600">Failed to load connectors.</p>;
 
+  function handleInputsChange(inputs: InputDefinition[]) {
+    setDraft((d) => ({ ...d, inputs }));
+  }
+
   function handleTriggerChange(trigger: TriggerConfig) {
     setDraft((d) => ({ ...d, trigger }));
   }
@@ -109,8 +116,9 @@ export function WorkflowBuilderPage() {
   }
 
   function canProceed(): boolean {
-    if (wizardStep === 0) return !!draft.trigger?.connector_id;
-    if (wizardStep === 1) return draft.steps.length > 0;
+    if (wizardStep === 0) return true; // Inputs are optional
+    if (wizardStep === 1) return !!draft.trigger?.connector_id;
+    if (wizardStep === 2) return draft.steps.length > 0;
     return true;
   }
 
@@ -177,7 +185,7 @@ export function WorkflowBuilderPage() {
       </div>
 
       {/* Workflow name & description */}
-      {wizardStep === 2 && !isEdit && (
+      {wizardStep === 3 && !isEdit && (
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -207,6 +215,13 @@ export function WorkflowBuilderPage() {
       {/* Wizard content */}
       <div className="pl-8">
         {wizardStep === 0 && (
+          <InputsEditor
+            inputs={draft.inputs}
+            onChange={handleInputsChange}
+          />
+        )}
+
+        {wizardStep === 1 && (
           <TriggerStep
             connectors={connectors}
             trigger={draft.trigger}
@@ -214,16 +229,17 @@ export function WorkflowBuilderPage() {
           />
         )}
 
-        {wizardStep === 1 && (
+        {wizardStep === 2 && (
           <StepList
             connectors={connectors}
             connections={connections ?? []}
             steps={draft.steps}
+            inputs={draft.inputs}
             onChange={handleStepsChange}
           />
         )}
 
-        {wizardStep === 2 && draft.trigger && draft.steps.length > 0 && (
+        {wizardStep === 3 && draft.trigger && draft.steps.length > 0 && (
           <ReviewStep definition={draftToDefinition(draft)} />
         )}
       </div>

@@ -120,6 +120,16 @@ export interface WorkflowDetail {
   active_version: WorkflowVersion | null;
 }
 
+// --- Workflow input definitions ---
+
+export interface InputDefinition {
+  name: string;
+  type: "string" | "number" | "boolean";
+  description?: string;
+  required?: boolean;
+  default?: unknown;
+}
+
 // --- Workflow definition structure ---
 
 export interface TriggerConfig {
@@ -136,6 +146,7 @@ export interface ActionStep {
   config: Record<string, unknown>;
   next: string;
   retry?: { max_attempts: number; delay_seconds: number };
+  outputs?: string[];
 }
 
 export interface BranchStep {
@@ -143,12 +154,14 @@ export interface BranchStep {
   condition: { field: string; operator: string; value?: unknown };
   on_true: string;
   on_false: string;
+  outputs?: string[];
 }
 
 export interface DelayStep {
   type: "delay";
   duration_seconds: number;
   next: string;
+  outputs?: string[];
 }
 
 export interface WaitForEventStep {
@@ -156,12 +169,14 @@ export interface WaitForEventStep {
   event_name: string;
   timeout_seconds?: number;
   next: string;
+  outputs?: string[];
 }
 
 export type StepDefinition = ActionStep | BranchStep | DelayStep | WaitForEventStep;
 
 export interface WorkflowDefinition {
   description?: string;
+  inputs?: InputDefinition[];
   trigger: TriggerConfig;
   start_at: string;
   steps: Record<string, StepDefinition>;
@@ -177,6 +192,7 @@ export interface DraftStep {
 export interface WorkflowDraft {
   name: string;
   description: string;
+  inputs: InputDefinition[];
   trigger: TriggerConfig | null;
   steps: DraftStep[];
 }

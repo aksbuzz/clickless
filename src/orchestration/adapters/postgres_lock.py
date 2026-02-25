@@ -1,7 +1,7 @@
 from src.shared.logging_config import log
-from src.orchestration.domain.ports import LockPort
 
-class PostgresLockService(LockPort):
+
+class PostgresLockService:
   def __init__(self, cursor):
     self.cursor = cursor
   

@@ -1,14 +1,34 @@
 import { ActionStepEditor } from './ActionStepEditor';
-import type { Connector, Connection, DraftStep, StepDefinition } from '../../types';
+import type { Connector, Connection, DraftStep, InputDefinition, StepDefinition } from '../../types';
+
+export interface AvailableVariable {
+  key: string;
+  source: string;
+}
 
 interface StepListProps {
   connectors: Connector[];
   connections: Connection[];
   steps: DraftStep[];
+  inputs: InputDefinition[];
   onChange: (steps: DraftStep[]) => void;
 }
 
-export function StepList({ connectors, connections, steps, onChange }: StepListProps) {
+function computeVariables(inputs: InputDefinition[], steps: DraftStep[], upToIndex: number): AvailableVariable[] {
+  const vars: AvailableVariable[] = inputs.map((inp) => ({
+    key: inp.name,
+    source: 'input',
+  }));
+  for (let i = 0; i < upToIndex; i++) {
+    const step = steps[i];
+    for (const out of step.definition.outputs ?? []) {
+      vars.push({ key: out, source: step.key });
+    }
+  }
+  return vars;
+}
+
+export function StepList({ connectors, connections, steps, inputs, onChange }: StepListProps) {
   const allStepKeys = steps.map((s) => s.key);
 
   function addStep() {
@@ -128,6 +148,7 @@ export function StepList({ connectors, connections, steps, onChange }: StepListP
               stepKey={step.key}
               definition={step.definition}
               allStepKeys={allStepKeys}
+              availableVariables={computeVariables(inputs, steps, i)}
               onKeyChange={(newKey) => updateKey(i, newKey)}
               onChange={(def) => updateStep(i, def)}
               onRemove={() => removeStep(i)}

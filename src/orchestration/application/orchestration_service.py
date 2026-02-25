@@ -17,13 +17,14 @@ from src.shared.metrics import (
 
 from src.orchestration.domain.models import EventType, RetryPolicy, WorkflowVersion, WorkflowStatus, WorkflowInstance, WorkflowStepExecution, StepExecutionStatus
 from src.orchestration.domain.events import WorkflowEvent
-from src.orchestration.domain.ports import UnitOfWorkPort, LockPort
+from src.orchestration.adapters.postgres_unit_of_work import PostgresUnitOfWork
+from src.orchestration.adapters.redis_lock import RedisLockService
 
 
 class OrchestrationService:
   LOCK_TIMEOUT = 30
-  
-  def __init__(self, uow: UnitOfWorkPort, lock_service: LockPort):
+
+  def __init__(self, uow: PostgresUnitOfWork, lock_service: RedisLockService):
     self.uow = uow
     self.lock_service = lock_service
 

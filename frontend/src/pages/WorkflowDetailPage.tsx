@@ -69,6 +69,14 @@ export function WorkflowDetailPage() {
             <div className="text-sm text-gray-600">
               Steps: <span className="text-gray-900">{Object.keys(definition.steps).length}</span>
             </div>
+            <div className="text-sm text-gray-600">
+              Inputs:{' '}
+              <span className="text-gray-900">
+                {definition.inputs && definition.inputs.length > 0
+                  ? `${definition.inputs.length} (${definition.inputs.map((i) => i.name).join(', ')})`
+                  : 'none'}
+              </span>
+            </div>
           </div>
         )}
       </div>
@@ -100,6 +108,7 @@ export function WorkflowDetailPage() {
         open={showRun}
         onClose={() => setShowRun(false)}
         workflowName={workflow.name}
+        inputs={definition?.inputs}
       />
     </div>
   );

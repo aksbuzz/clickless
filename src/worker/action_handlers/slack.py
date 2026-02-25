@@ -2,11 +2,12 @@ import httpx
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus
-from src.worker.domain.ports import ActionHandlerPort, ActionResult
+from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.registry import action
 
 
-class SlackSendMessageHandler(ActionHandlerPort):
+@action("slack_send_message")
+class SlackSendMessageHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
         config = resolve_config(config or {}, data)
         webhook_url = config.get("webhook_url", "")
