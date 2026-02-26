@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends
 
 from src.shared.logging_config import log
 from src.shared.triggers.registry import TriggerHandlerRegistry
-from src.api.application.service import WorkflowManagementService
+from src.api.service import WorkflowManagementService
 from src.api.dependencies import get_service, get_trigger_registry
 from src.api.schemas import TriggerResultOut
 

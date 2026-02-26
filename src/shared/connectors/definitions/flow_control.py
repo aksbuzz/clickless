@@ -14,7 +14,7 @@ flow_control_connector = Connector(
             config_schema={
                 "type": "object",
                 "properties": {
-                    "field": {"type": "string", "title": "Field Path", "description": "Dot-notation path to evaluate (e.g., 'invoice.amount')"},
+                    "field": {"type": "string", "title": "Field Path", "description": "Dot-notation path to evaluate (e.g., 'order.quantity')"},
                     "operator": {"type": "string", "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists"], "title": "Operator"},
                     "value": {"title": "Value", "description": "Value to compare against"},
                 },

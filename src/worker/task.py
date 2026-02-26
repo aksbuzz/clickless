@@ -1,7 +1,7 @@
 from src.shared.celery_app import app
 from src.shared.constants import ACTIONS_QUEUE
 
-from src.worker.application.worker_service import WorkerService
+from src.worker.service import WorkerService
 from src.worker.registry import get_registry
 
 registry = get_registry()

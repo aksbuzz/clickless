@@ -1,7 +1,7 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from src.api.domain.exceptions import (
+from src.api.errors import (
     WorkflowNotFoundError, InstanceNotFoundError,
     ConnectionNotFoundError, InvalidStateError,
     DuplicateWorkflowError, DuplicateConnectionError, ValidationError,

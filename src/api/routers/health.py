@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Response, Depends
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from src.shared.logging_config import log
-from src.api.application.service import WorkflowManagementService
+from src.shared.db import db_cursor
+from src.api.service import WorkflowManagementService
 from src.api.dependencies import get_service
 
 router = APIRouter()
@@ -28,10 +29,10 @@ def health(service: WorkflowManagementService = Depends(get_service)):
 
 
 @router.get("/ready")
-def ready(service: WorkflowManagementService = Depends(get_service)):
+def ready():
     try:
-        with service.uow:
-            service.uow.repo.cursor.execute("SELECT 1")
+        with db_cursor() as cur:
+            cur.execute("SELECT 1")
         return {"status": "ready"}
     except Exception:
         raise HTTPException(status_code=503, detail={"status": "not_ready"})

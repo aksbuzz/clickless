@@ -9,7 +9,7 @@ RABBITMQ_URL = os.getenv("RABBITMQ_URL")
 app = Celery('workflows', 
   broker=RABBITMQ_URL, 
   backend='redis://redis:6379/1',
-  include=['src.orchestration.entrypoint.celery_task', 'src.worker.entrypoint.celery_task']
+  include=['src.orchestration.entrypoint.celery_task', 'src.worker.task']
 )
 
 app.conf.update(

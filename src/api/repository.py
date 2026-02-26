@@ -4,7 +4,7 @@ from typing import Optional
 from src.shared.base_repository import BaseRepository
 
 
-class PostgresAPIRepository(BaseRepository):
+class WorkflowRepository(BaseRepository):
 
     def find_active_version_by_name(self, name: str) -> Optional[dict]:
         return self.fetch_one(
@@ -97,8 +97,7 @@ class PostgresAPIRepository(BaseRepository):
             "JOIN workflow_versions v ON i.workflow_version_id = v.id "
             "JOIN workflows w ON v.workflow_id = w.id"
         )
-        conditions = []
-        params = []
+        conditions, params = [], []
         if status:
             conditions.append("i.status = %s")
             params.append(status)
@@ -121,8 +120,6 @@ class PostgresAPIRepository(BaseRepository):
             (instance_id,)
         )
 
-    # --- Recovery ---
-
     def find_stuck_instances(self, stale_seconds: int = 60) -> list:
         return self.fetch_all(
             "SELECT i.id, i.status, i.current_step, i.data, "
@@ -136,7 +133,7 @@ class PostgresAPIRepository(BaseRepository):
             (stale_seconds,)
         )
 
-    def find_latest_step_execution(self, instance_id: str, step_name: str) -> dict:
+    def find_latest_step_execution(self, instance_id: str, step_name: str) -> Optional[dict]:
         return self.fetch_one(
             "SELECT id, step_name, status, output_data "
             "FROM workflow_step_executions "
@@ -144,8 +141,6 @@ class PostgresAPIRepository(BaseRepository):
             "ORDER BY started_at DESC LIMIT 1;",
             (instance_id, step_name)
         )
-
-    # --- Connections ---
 
     def create_connection(self, connector_id: str, name: str, config: dict) -> str:
         return self.execute_returning(

@@ -1,25 +1,19 @@
 # Workflow Automation App
 
-A tool to automate your business tasks.
-
----
-
-## What is this?
-
-This app helps you create **workflows**. A workflow is a list of tasks that run automatically.
+A tool to automate your business tasks. This app helps you create **workflows**. A workflow is a list of tasks that run automatically.
 
 **Example:**
-- Get an invoice → Check if it's correct → Create a report → Save the report
+- Receive an order → Classify priority → Set shipping days → Log the result
 
 ---
 
 ## Main Features
 
-✅ **Create workflows** - Build step-by-step tasks
-✅ **Connect apps** - Link with GitHub, Slack, databases
-✅ **Run automatically** - Start workflows with events
-✅ **See progress** - Track what is happening
-✅ **Visual builder** - Easy drag and drop interface
+- **Create workflows** - Build step-by-step tasks
+- **Connect apps** - Link with GitHub, Slack, databases
+- **Run automatically** - Start workflows with events
+- **See progress** - Track what is happening
+- **Visual builder** - Easy drag and drop interface
 
 ---
 
@@ -82,8 +76,6 @@ After starting, open your web browser:
 
 ## What's Inside?
 
-The app has these parts:
-
 | Part | What it does |
 |------|--------------|
 | **Frontend** | Website you see and click |
@@ -121,7 +113,7 @@ docker-compose down
 docker-compose down -v
 ```
 
-⚠️ **Warning**: This deletes your database!
+**Warning**: This deletes your database!
 
 ### Restart the app
 
@@ -185,25 +177,47 @@ workflow_automate/
 
 ```json
 {
-  "description": "Check invoice amount",
-  "start_at": "check_amount",
+  "description": "Classify order priority by quantity and set shipping days.",
+  "start_at": "compute_priority",
   "steps": {
-    "check_amount": {
+    "compute_priority": {
+      "type": "action",
+      "connector_id": "python",
+      "action_id": "python_execute",
+      "config": {
+        "code": "qty = data.get('order', {}).get('quantity', 0)\ndata['priority'] = 'high' if qty >= 100 else 'normal'"
+      },
+      "next": "check_priority"
+    },
+    "check_priority": {
       "type": "branch",
       "condition": {
-        "field": "amount",
-        "operator": "gt",
-        "value": 1000
+        "field": "priority",
+        "operator": "eq",
+        "value": "high"
       },
-      "on_true": "approve",
-      "on_false": "reject"
+      "on_true": "set_expedited",
+      "on_false": "set_standard"
     },
-    "approve": {
+    "set_expedited": {
       "type": "action",
-      "next": "end"
+      "connector_id": "internal",
+      "action_id": "transform_data",
+      "config": { "set": { "expedited": true, "shipping_days": 1 } },
+      "next": "log_result"
     },
-    "reject": {
+    "set_standard": {
       "type": "action",
+      "connector_id": "internal",
+      "action_id": "transform_data",
+      "config": { "set": { "expedited": false, "shipping_days": 5 } },
+      "next": "log_result"
+    },
+    "log_result": {
+      "type": "action",
+      "connector_id": "internal",
+      "action_id": "log",
+      "config": { "message": "Order processed: priority={{priority}}, shipping_days={{shipping_days}}" },
       "next": "end"
     }
   }
@@ -236,16 +250,6 @@ Then restart:
 docker-compose down -v
 docker-compose up --build -d
 ```
-
----
-
-## Important Notes
-
-📌 Always use the **.env** file for passwords and secrets
-📌 Don't share your **.env** file
-📌 Check **logs** if something goes wrong
-📌 The frontend is at **port 3000**
-📌 The API is at **port 8000**
 
 ---
 

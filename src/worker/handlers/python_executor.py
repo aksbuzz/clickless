@@ -2,7 +2,7 @@ import threading
 from typing import Any, Dict
 
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
 
 ALLOWED_MODULES = {"math", "json", "re", "datetime"}

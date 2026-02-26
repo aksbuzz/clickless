@@ -3,61 +3,11 @@ import httpx
 
 from src.shared.logging_config import log
 
-from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
 
 DEFAULT_TIMEOUT = 30
 
-
-@action("fetch_invoice")
-class FetchInvoiceHandler:
-  def execute(self, instance_id, data, **kwargs):
-    log.info(f"Fetching invoice...", instance_id=instance_id)
-    
-    time.sleep(2) # Simulate n/w call
-    
-    amount = data.get('invoice_details', {}).get('amount', 0)
-    data['invoice_details'] = {'amount': amount or 1200, 'customer': 'Big Corp'}
-    
-    return ActionResult(ActionStatus.SUCCESS, data)
-
-@action("validate_invoice")
-class ValidateInvoiceHandler:
-  def execute(self, instance_id, data, **kwargs):
-    log.info(f"Validating invoice...", instance_id=instance_id)
-    amount = data.get('invoice_details', {}).get('amount', 0)
-    
-    # Simulate business error
-    if amount > 1000:
-      data['is_valid'] = True
-      return ActionResult(ActionStatus.SUCCESS, data)
-    else:
-      data['is_valid'] = False
-      data['error'] = "Invoice amount is too low for this test."
-      return ActionResult(ActionStatus.FAILURE, data)
-
-@action("generate_report")
-class GenerateReportHandler:
-  def execute(self, instance_id, data, **kwargs):
-    log.info(f"Generating PDF report...", instance_id=instance_id)
-    report_content = f"Invoice Report for {data['invoice_details']['customer']}\nAmount: ${data['invoice_details']['amount']}"
-    
-    data['report_content'] = report_content
-    return ActionResult(ActionStatus.SUCCESS, data)
-
-@action("archive_report")
-class ArchiveReportHandler:
-  def execute(self, instance_id, data, **kwargs):
-    log.info("Archiving report to S3...", instance_id=instance_id)
-
-    time.sleep(2)  # Simulate storing to S3
-    object_name = f"{instance_id}/report.txt"
-    data['report_archive_path'] = f"s3://bucket/{object_name}"
-
-    if 'report_content' in data:
-      del data['report_content']
-
-    return ActionResult(ActionStatus.SUCCESS, data)
 
 @action("initial_step")
 class InitialStepHandler:

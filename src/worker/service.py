@@ -6,7 +6,7 @@ from src.shared.logging_config import log
 from src.shared.constants import ORCHESTRATION_QUEUE
 from src.shared.db import db_cursor
 
-from src.worker.domain.models import (
+from src.worker.models import (
     ActionResult, ActionStatus,
     STEP_COMPLETE_EVENT, STEP_FAILED_EVENT, STEP_COMPLETED_STATUS,
 )
@@ -22,7 +22,7 @@ class WorkerService:
         log.info("Executing action", action=action_name, step=step_name, instance_id=instance_id)
 
         with db_cursor() as cur:
-            # Idempotency Check
+            # Idempotency check
             cur.execute(
                 "SELECT id, status FROM workflow_step_executions "
                 "WHERE instance_id = %s AND step_name = %s "
@@ -40,7 +40,7 @@ class WorkerService:
             if not instance_row:
                 raise Reject(f"No instance found for id: {instance_id}", requeue=False)
 
-            # Resolve connection credentials if connection_id is provided
+            # Resolve connection credentials
             if connection_id:
                 cur.execute("SELECT config FROM connections WHERE id = %s", (connection_id,))
                 conn_row = cur.fetchone()
@@ -51,13 +51,12 @@ class WorkerService:
                 else:
                     log.warning("Connection not found, proceeding without it", connection_id=connection_id, action=action_name)
 
-            # Find handler
+            # Find and execute handler
             handler = self.registry.get(action_name)
             if not handler:
                 log.error("No handler found for action", action=action_name)
                 raise Reject(f"No handler for action: {action_name}", requeue=False)
 
-            # Execute handler — catch exceptions and convert to STEP_FAILED
             try:
                 result: ActionResult = handler.execute(instance_id, instance_row["data"] or {}, config=config, task_context=task_context)
             except Exception as e:

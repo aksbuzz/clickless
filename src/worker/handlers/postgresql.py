@@ -3,7 +3,7 @@ import psycopg2.extras
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
-from src.worker.domain.models import ActionStatus, ActionResult
+from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
 
 

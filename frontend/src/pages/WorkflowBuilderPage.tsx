@@ -195,7 +195,7 @@ export function WorkflowBuilderPage() {
               type="text"
               value={draft.name}
               onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value.replace(/\s+/g, '_') }))}
-              placeholder="e.g. invoice_workflow"
+              placeholder="e.g. order_priority_workflow"
               className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
             />
           </div>

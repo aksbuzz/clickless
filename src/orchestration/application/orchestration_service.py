@@ -305,7 +305,7 @@ class OrchestrationService:
 
   @staticmethod
   def _resolve_field(data: dict, field_path: str):
-    """Resolve a dot-separated field path like 'invoice_details.amount'."""
+    """Resolve a dot-separated field path like 'order.quantity'."""
     parts = field_path.split('.')
     current = data
     for part in parts:

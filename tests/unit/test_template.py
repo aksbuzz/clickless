@@ -25,14 +25,14 @@ class TestResolveField:
     def test_resolve_deeply_nested_field(self):
         """Test resolving a deeply nested field."""
         data = {
-            "invoice": {
+            "order": {
                 "customer": {
                     "name": "ACME Corp",
                     "id": "123"
                 }
             }
         }
-        result = resolve_field(data, "invoice.customer.name")
+        result = resolve_field(data, "order.customer.name")
         assert result == "ACME Corp"
 
     def test_resolve_field_with_whitespace(self):

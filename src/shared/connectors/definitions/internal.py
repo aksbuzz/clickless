@@ -39,30 +39,6 @@ internal_connector = Connector(
                 },
             },
         ),
-        ActionDefinition(
-            id="fetch_invoice",
-            name="Fetch Invoice",
-            description="Demo action: simulates fetching an invoice from an external system.",
-            config_schema={},
-        ),
-        ActionDefinition(
-            id="validate_invoice",
-            name="Validate Invoice",
-            description="Demo action: validates invoice amount (succeeds if amount > 1000).",
-            config_schema={},
-        ),
-        ActionDefinition(
-            id="generate_report",
-            name="Generate Report",
-            description="Demo action: generates a text report from invoice data.",
-            config_schema={},
-        ),
-        ActionDefinition(
-            id="archive_report",
-            name="Archive Report",
-            description="Demo action: simulates archiving a report to S3.",
-            config_schema={},
-        ),
     ],
 )
 

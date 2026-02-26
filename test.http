@@ -80,23 +80,23 @@ Content-Type: application/json
   }
 }
 
-### Run invoice workflow - Success (amount > 1000, takes true branch)
-POST http://localhost:8000/workflows/invoice_workflow/run HTTP/1.1
+### Run order priority workflow - High priority (quantity >= 100, expedited shipping)
+POST http://localhost:8000/workflows/order_priority_workflow/run HTTP/1.1
 Content-Type: application/json
 
-{ "data": {"invoice_details": { "amount": 1201 }} }
+{ "data": {"order": { "quantity": 150 }} }
 
-### Run invoice workflow - Branch false (amount <= 1000, goes to end)
-POST http://localhost:8000/workflows/invoice_workflow/run HTTP/1.1
+### Run order priority workflow - Normal priority (quantity < 100, standard shipping)
+POST http://localhost:8000/workflows/order_priority_workflow/run HTTP/1.1
 Content-Type: application/json
 
-{ "data": {"invoice_details": { "amount": 500 }} }
+{ "data": {"order": { "quantity": 30 }} }
 
-### Trigger workflow via webhook
-POST http://localhost:8000/webhooks/invoice_workflow HTTP/1.1
+### Trigger order priority workflow via webhook
+POST http://localhost:8000/webhooks/order_priority_workflow HTTP/1.1
 Content-Type: application/json
 
-{ "data": {"invoice_details": { "amount": 2000 }} }
+{ "data": {"order": { "quantity": 200 }} }
 
 ### Cancel a running instance (replace with actual UUID)
 POST http://localhost:8000/instances/REPLACE_WITH_INSTANCE_ID/cancel

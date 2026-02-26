@@ -109,51 +109,62 @@ DO $$
 DECLARE
   wf_id UUID;
 BEGIN
-  INSERT INTO workflows (name) VALUES ('invoice_workflow') RETURNING id INTO wf_id;
+  INSERT INTO workflows (name) VALUES ('order_priority_workflow') RETURNING id INTO wf_id;
 
   INSERT INTO workflow_versions (workflow_id, version, definition) VALUES (wf_id, 1, '{
-    "description": "Invoice approval flow with branching on amount.",
+    "description": "Classify order priority by quantity and set shipping days.",
     "trigger": {
       "connector_id": "http",
       "trigger_id": "http_request_received",
       "config": {}
     },
-    "start_at": "fetch_invoice",
+    "start_at": "compute_priority",
     "steps": {
-      "fetch_invoice": {
+      "compute_priority": {
         "type": "action",
-        "connector_id": "internal",
-        "action_id": "fetch_invoice",
-        "config": {},
-        "next": "check_amount"
+        "connector_id": "python",
+        "action_id": "python_execute",
+        "config": {
+          "code": "qty = data.get(''order'', {}).get(''quantity'', 0)\ndata[''priority''] = ''high'' if qty >= 100 else ''normal''"
+        },
+        "next": "check_priority"
       },
-      "check_amount": {
+      "check_priority": {
         "type": "branch",
         "condition": {
-          "field": "invoice_details.amount",
-          "operator": "gt",
-          "value": 1000
+          "field": "priority",
+          "operator": "eq",
+          "value": "high"
         },
-        "on_true": "generate_report",
-        "on_false": "end"
+        "on_true": "set_expedited",
+        "on_false": "set_standard"
       },
-      "generate_report": {
+      "set_expedited": {
         "type": "action",
         "connector_id": "internal",
-        "action_id": "generate_report",
-        "config": {},
-        "next": "archive_report"
+        "action_id": "transform_data",
+        "config": {
+          "set": {"expedited": true, "shipping_days": 1}
+        },
+        "next": "log_result"
       },
-      "archive_report": {
+      "set_standard": {
         "type": "action",
         "connector_id": "internal",
-        "action_id": "archive_report",
-        "config": {},
-        "next": "end",
-        "retry": {
-          "max_attempts": 3,
-          "delay_seconds": 5
-        }
+        "action_id": "transform_data",
+        "config": {
+          "set": {"expedited": false, "shipping_days": 5}
+        },
+        "next": "log_result"
+      },
+      "log_result": {
+        "type": "action",
+        "connector_id": "internal",
+        "action_id": "log",
+        "config": {
+          "message": "Order processed: priority={{priority}}, expedited={{expedited}}, shipping_days={{shipping_days}}"
+        },
+        "next": "end"
       }
     }
   }');

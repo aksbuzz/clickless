@@ -14,10 +14,9 @@ from src.orchestration.application.orchestration_service import (
   OrchestrationService, RetryableError, NonRetryableError
 )
 
-from src.api.adapters.postgres_unit_of_work import PostgresAPIUnitOfWork
 from src.shared.connectors.registry import registry as connector_registry
 import src.shared.connectors.definitions  # noqa: F401
-from src.api.application.service import WorkflowManagementService
+from src.api.service import WorkflowManagementService
 
 lock_service = RedisLockService(redis_client)
 
@@ -62,8 +61,7 @@ def orchestrate(self, message: dict):
 def recover_stuck_instances():
   """Periodic sweeper: detects and recovers stuck workflow instances."""
   try:
-    uow = PostgresAPIUnitOfWork()
-    svc = WorkflowManagementService(uow, connector_registry)
+    svc = WorkflowManagementService(connector_registry)
     recovered = svc.recover_stuck_instances(stale_seconds=60)
     if recovered:
       log.info("Recovery sweeper completed", recovered_count=len(recovered), details=recovered)
