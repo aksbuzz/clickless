@@ -1,7 +1,7 @@
 """Guard for outbound connections made on behalf of workflow authors.
 
 Workflow configs choose URLs and database hosts. From inside the Docker network those could point at the
-broker's admin port, Redis, Postgres or a cloud metadata address, so by default only public addresses are
+platform's own database and API or a cloud metadata address, so by default only public addresses are
 allowed. Operators can open specific destinations with environment variables:
 
     OUTBOUND_ALLOW_HOSTS=db.internal,10.0.0.7    comma-separated hosts or IPs that are always allowed

@@ -91,7 +91,12 @@ def main():
     ap.add_argument("--server-workers", type=int, default=1, help="uvicorn worker processes")
     ap.add_argument("--requests", type=int, default=3000)
     ap.add_argument("--concurrency", type=int, default=32)
+    ap.add_argument("--sync-commit", choices=["on", "off"], default="on",
+                    help="off removes the disk-sync wait, which shows the CPU-bound rate (never use off for real starts)")
     args = ap.parse_args()
+    server_dsn = args.dsn
+    if args.sync_commit == "off":
+        server_dsn += ("&" if "?" in server_dsn else "?") + "options=-c%20synchronous_commit%3Doff"
 
     admin = psycopg2.connect(args.dsn)
     admin.autocommit = True
@@ -107,7 +112,7 @@ def main():
     server = subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "src.api.main:app", "--app-dir", str(ROOT), "--port", str(PORT),
          "--workers", str(args.server_workers), "--log-level", "warning"],
-        env={**os.environ, "DATABASE_URL": args.dsn, "API_KEY": KEY})
+        env={**os.environ, "DATABASE_URL": server_dsn, "API_KEY": KEY})
     try:
         import urllib.request
         for _ in range(150):
@@ -133,7 +138,7 @@ def main():
 
     n = args.requests
     print(json.dumps({
-        "server_workers": args.server_workers, "concurrency": args.concurrency, "requests": n,
+        "server_workers": args.server_workers, "concurrency": args.concurrency, "sync_commit": args.sync_commit, "requests": n,
         "cpus_visible": len(os.sched_getaffinity(0)),
         "requests_per_s": round(n / elapsed),
         "api_cpu_ms_per_request": round(1000 * (srv1 - srv0) / n, 2),
