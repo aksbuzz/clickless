@@ -97,3 +97,18 @@ def test_migration_can_be_applied_twice(databases):
     old = databases(OLD_SCHEMA)
     old.cursor().execute(MIGRATION.read_text(encoding="utf-8"))
     old.cursor().execute(MIGRATION.read_text(encoding="utf-8"))
+
+
+MIGRATION_001 = ROOT / "infrastructure" / "postgres" / "migrations" / "001_add_request_id_tracing.sql"
+
+
+def test_migration_001_still_applies_to_a_current_database(databases):
+    """001 predates the job queue and touches the outbox; it must not break a database that no longer has one."""
+    fresh = databases(NEW_SCHEMA)
+    fresh.cursor().execute(MIGRATION_001.read_text(encoding="utf-8"))
+
+
+def test_the_migrations_apply_in_order_to_a_database_from_before_both(databases):
+    cur = databases(OLD_SCHEMA).cursor()
+    cur.execute(MIGRATION_001.read_text(encoding="utf-8"))
+    cur.execute(MIGRATION.read_text(encoding="utf-8"))
