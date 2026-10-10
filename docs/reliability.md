@@ -38,8 +38,8 @@ Cancel and resume lock the instance row like a step does, so they queue behind a
 |---|---|
 | Handler returns a failure or raises | The attempt is recorded with the error text. If the step's `retry.max_attempts` allows, the same job is re-queued after `delay_seconds`; otherwise the job is marked `dead` and the instance `failed`. |
 | Action id with no handler | Instance fails: `no handler registered for action '...'`. |
-| `next` or branch target that does not exist | Instance fails: `step '...' is not defined`. |
-| Branch or delay cycle | After 100 control steps in a row the instance fails. |
+| `next` or branch target that does not exist | Refused when the workflow is saved ([ADR 0023](adr/0023-validate-workflow-definitions-when-they-are-saved.md)). In an older stored version the instance fails: `step '...' is not defined`. |
+| Branch or delay cycle | Refused when the workflow is saved. In an older stored version, after 100 control steps in a row the instance fails. |
 | Connection credential not found | Step fails before the handler runs. |
 | `wait_for_event` times out | Instance fails: `wait step '...' timed out`. |
 | Engine error (database hiccup) while processing a job | The job is released and retried after 10 s. |

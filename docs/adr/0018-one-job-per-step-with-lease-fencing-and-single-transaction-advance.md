@@ -52,7 +52,7 @@ Negative / open points:
 
 - **Side effects remain at-least-once.** Fencing protects database state, not the outside world: if a lease expires during a handler, another worker runs it again.
 - **No lease heartbeat**, so the lease (`JOB_LEASE_SECONDS`, default 300 s) must exceed the slowest step. A hung handler holds a thread until its own timeout; threads cannot be killed.
-- The cycle guard covers branch and delay steps only. A loop through action steps has no per-instance step cap yet, and definitions are not fully validated when saved.
+- The cycle guard covers branch and delay steps only: saving such a loop is now refused ([ADR 0023](0023-validate-workflow-definitions-when-they-are-saved.md)), and the engine still stops one in an older stored version. A loop through action steps has no per-instance step cap yet.
 - Only sequential workflows are supported: one live job per instance. Parallel branches would need per-branch state; the instance row lock would still serialise writes.
 - Handlers must be stateless and thread-safe (they are called concurrently).
 

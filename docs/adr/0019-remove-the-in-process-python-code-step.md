@@ -34,7 +34,7 @@ Positive:
 Negative / follow-up:
 
 - Workflows can no longer compute values with code. The remaining tools are `branch` conditions (`eq neq gt gte lt lte contains exists`) and `transform_data` (set and remove fields). If computed values are needed, add an expression language in a new ADR.
-- **Existing databases.** `init.sql` only runs on an empty volume, so a database created earlier still has the old seed workflow, and any user workflow may use `python_execute`. New saves are rejected by `validate_definition` (unknown action id), but stored versions are not touched and will fail at run time: the step is recorded as failed with "no handler registered for action 'python_execute'" and the instance ends as `failed`. Find them with:
+- **Existing databases.** `init.sql` only runs on an empty volume, so a database created earlier still has the old seed workflow, and any user workflow may use `python_execute`. New saves are rejected by `validate_definition` (unknown connector or action id), but stored versions are not touched and will fail at run time: the step is recorded as failed with "no handler registered for action 'python_execute'" and the instance ends as `failed`. Find them with:
 
   ```sql
   SELECT w.name, v.version
