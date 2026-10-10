@@ -6,4 +6,3 @@ import src.shared.connectors.definitions.slack
 import src.shared.connectors.definitions.trello
 import src.shared.connectors.definitions.github
 import src.shared.connectors.definitions.postgresql
-import src.shared.connectors.definitions.python

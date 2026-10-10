@@ -15,7 +15,7 @@ ADRs 0002 to 0016 were written retrospectively on 2026-10-07 from the code, the 
 | [0007](0007-stuck-instance-recovery-sweeper.md) | Stuck-instance recovery sweeper | Accepted - under review (not running) |
 | [0008](0008-connector-registry-and-trigger-handler-ports.md) | Connector registry and trigger handler ports | Accepted - under review |
 | [0009](0009-webhook-trigger-ingestion-and-signature-verification.md) | Webhook ingestion and signature verification | Accepted - under review |
-| [0010](0010-in-process-python-code-step.md) | In-process Python code step | Accepted - under review (security) |
+| [0010](0010-in-process-python-code-step.md) | In-process Python code step | Superseded by 0019 |
 | [0011](0011-connection-credentials-stored-in-postgres.md) | Connection credentials stored in Postgres | Accepted - under review |
 | [0012](0012-synchronous-psycopg2-with-per-process-pools.md) | Synchronous psycopg2 with per-process pools | Accepted - under review |
 | [0013](0013-structured-logging-request-correlation-and-prometheus-metrics.md) | Structured logging, correlation, Prometheus metrics | Accepted - under review |
@@ -24,6 +24,7 @@ ADRs 0002 to 0016 were written retrospectively on 2026-10-07 from the code, the 
 | [0016](0016-react-spa-served-by-nginx-with-polling.md) | React SPA served by nginx, polling for status | Accepted - under review |
 | [0017](0017-postgres-backed-job-queue-replaces-outbox-broker-and-celery.md) | Postgres-backed job queue replaces outbox, broker, Celery, Redis lock | **Proposed** |
 | [0018](0018-one-job-per-step-with-lease-fencing-and-single-transaction-advance.md) | One job per step, lease fencing, single-transaction advance | **Proposed** |
+| [0019](0019-remove-the-in-process-python-code-step.md) | Remove the in-process Python code step | Accepted |
 
 ## Conventions
 

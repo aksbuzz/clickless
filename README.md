@@ -178,24 +178,12 @@ workflow_automate/
 ```json
 {
   "description": "Classify order priority by quantity and set shipping days.",
-  "start_at": "compute_priority",
+  "trigger": { "connector_id": "http", "trigger_id": "http_request_received", "config": {} },
+  "start_at": "check_quantity",
   "steps": {
-    "compute_priority": {
-      "type": "action",
-      "connector_id": "python",
-      "action_id": "python_execute",
-      "config": {
-        "code": "qty = data.get('order', {}).get('quantity', 0)\ndata['priority'] = 'high' if qty >= 100 else 'normal'"
-      },
-      "next": "check_priority"
-    },
-    "check_priority": {
+    "check_quantity": {
       "type": "branch",
-      "condition": {
-        "field": "priority",
-        "operator": "eq",
-        "value": "high"
-      },
+      "condition": { "field": "order.quantity", "operator": "gte", "value": 100 },
       "on_true": "set_expedited",
       "on_false": "set_standard"
     },
@@ -203,14 +191,14 @@ workflow_automate/
       "type": "action",
       "connector_id": "internal",
       "action_id": "transform_data",
-      "config": { "set": { "expedited": true, "shipping_days": 1 } },
+      "config": { "set": { "priority": "high", "expedited": true, "shipping_days": 1 } },
       "next": "log_result"
     },
     "set_standard": {
       "type": "action",
       "connector_id": "internal",
       "action_id": "transform_data",
-      "config": { "set": { "expedited": false, "shipping_days": 5 } },
+      "config": { "set": { "priority": "normal", "expedited": false, "shipping_days": 5 } },
       "next": "log_result"
     },
     "log_result": {
@@ -223,7 +211,6 @@ workflow_automate/
   }
 }
 ```
-
 
 ### Run tests
 

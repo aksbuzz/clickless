@@ -16,5 +16,4 @@ def get_registry() -> dict:
     import src.worker.handlers.github            # noqa: F401
     import src.worker.handlers.trello            # noqa: F401
     import src.worker.handlers.postgresql        # noqa: F401
-    import src.worker.handlers.python_executor   # noqa: F401
     return {name: cls() for name, cls in _HANDLERS.items()}

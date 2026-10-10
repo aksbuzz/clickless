@@ -38,7 +38,7 @@ Throughput test knobs: `SPIKE_WORKERS` (default 4), `SPIKE_INSTANCES` (default 3
 
 Results on 2026-10-10: **20 passed**, PostgreSQL 17, Python 3.14.
 
-- Seed `order_priority_workflow` runs to completion with the real `python_execute`, `transform_data` and `log` handlers, for both branches.
+- Seed `order_priority_workflow` runs to completion with the real `transform_data` and `log` handlers, for both branches.
 - Crash recovery: a job claimed by a worker that never finishes is taken by another worker once the lease expires.
 - Zombie worker: a worker whose lease expired and whose job was reclaimed finishes later; its result is discarded. The handler ran twice, state advanced once.
 - A job claimed more than `MAX_CLAIMS` times is marked `dead` and its instance failed.
@@ -109,7 +109,7 @@ What this says:
 - No HTTP API, webhook ingestion, authentication, connection secrets handling, request-id propagation or metrics.
 - No purge of finished jobs, and no lease heartbeat (a handler longer than the lease is run again).
 - No definition validation beyond catching undefined steps and branch/delay cycles at run time.
-- The security problems in the Python, SQL and HTTP handlers (audit F-02, F-05, F-06) are unchanged: the seed workflow still runs `python_execute`. Run it only on a trusted machine with trusted data.
+- The security problems in the SQL and HTTP handlers (audit F-05, F-06) are unchanged in the spike. (The Python code step, F-02, was removed from the main code on 2026-10-10.) Run the spike only on a trusted machine with trusted data.
 - Frontend not checked: step executions are now one row per attempt and `input_data` is empty.
 
 ## Optimisation backlog (noted, deliberately not done)

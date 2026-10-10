@@ -67,7 +67,7 @@ class Pool:
 
 @pytest.fixture
 def handlers():
-    registry = get_registry()   # the real handlers: python_execute, transform_data, log, http_request, ...
+    registry = get_registry()   # the real handlers: transform_data, log, http_request, ...
     return registry
 
 
@@ -138,7 +138,7 @@ def test_seed_workflow_runs_to_completion_with_real_handlers(db, dsn, handlers, 
     assert row["data"]["expedited"] is expedited
     assert row["data"]["shipping_days"] == days
     steps = [(e["step_name"], e["status"]) for e in executions(db, iid)]
-    assert steps == [("compute_priority", "completed"), ("check_priority", "completed"),
+    assert steps == [("check_quantity", "completed"),
                      (("set_expedited" if expedited else "set_standard"), "completed"), ("log_result", "completed")]
     assert all(j["status"] == "done" for j in jobs(db, iid))
 
@@ -147,9 +147,9 @@ def test_step_execution_stores_only_the_delta_not_the_whole_instance_data(db, ds
     iid = engine.start_workflow("order_priority_workflow", {"order": {"quantity": 150}})
     with Pool(dsn, handlers):
         wait_until(terminal(db, iid))
-    first = executions(db, iid)[0]
-    assert first["output_data"] == {"priority": "high"}   # not {"order": ..., "priority": ...}
-    assert first["input_data"] is None
+    set_step = [e for e in executions(db, iid) if e["step_name"] == "set_expedited"][0]
+    assert set_step["output_data"] == {"priority": "high", "expedited": True, "shipping_days": 1}   # not the whole data
+    assert set_step["input_data"] is None
 
 
 def test_keys_removed_by_a_step_are_removed_from_the_instance_data(db, dsn, handlers, engine):

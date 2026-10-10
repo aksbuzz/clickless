@@ -1,6 +1,6 @@
 # 0010. In-process Python code step
 
-- Status: Accepted - under review (security: F-02, must be revisited before any exposure)
+- Status: Superseded by [0019](0019-remove-the-in-process-python-code-step.md) (the step was removed on 2026-10-10)
 - Date: 2026-10-07 (recorded retrospectively)
 
 ## Context
