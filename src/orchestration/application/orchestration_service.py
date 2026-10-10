@@ -112,7 +112,7 @@ class OrchestrationService:
 
       step_execution.status = StepExecutionStatus.FAILED
       step_execution.completed_at = datetime.now(timezone.utc)
-      step_execution.error_details = str(event.data.get("error", "Unknown error"))
+      step_execution.error_details = str((event.data or {}).get("error", "Unknown error"))
       self.uow.workflow.save_step_execution(step_execution)
 
 

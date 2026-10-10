@@ -66,8 +66,12 @@ class WorkerService:
             # Send result back to orchestrator via outbox
             event_type = STEP_COMPLETE_EVENT if result.status == ActionStatus.SUCCESS else STEP_FAILED_EVENT
             payload = {"type": event_type, "instance_id": str(instance_id), "step_name": step_name}
-            if result.updated_data:
-                payload["data"] = result.updated_data
+            if result.status == ActionStatus.SUCCESS:
+                if result.updated_data:
+                    payload["data"] = result.updated_data
+            else:
+                # The engine records this as the step's error and shows it to the user.
+                payload["data"] = {"error": result.error_message or "Unknown error"}
 
             cur.execute(
                 "INSERT INTO outbox (destination, payload) VALUES (%s, %s)",
