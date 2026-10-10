@@ -3,18 +3,19 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from src.shared.logging_config import log
 from src.shared.db import db_cursor
+from src.api.auth import require_api_key
 from src.api.service import WorkflowManagementService
 from src.api.dependencies import get_service
 
 router = APIRouter()
 
 
-@router.get("/metrics")
+@router.get("/metrics", dependencies=[Depends(require_api_key)])
 def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
-@router.get("/health")
+@router.get("/health", dependencies=[Depends(require_api_key)])
 def health(service: WorkflowManagementService = Depends(get_service)):
     try:
         result = service.health_check()

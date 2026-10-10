@@ -1,17 +1,25 @@
 import time
+from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 
 from src.shared.logging_config import log
 from src.shared.metrics import http_requests_total, http_request_duration_seconds
 
+from src.api.auth import require_api_key, validate_auth_config
 from src.api.exception_handlers import register_exception_handlers
 from src.api.routers import health, connectors, connections, workflows, instances, triggers, admin
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    validate_auth_config()   # refuse to start without a strong API key
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,13 +30,16 @@ app.add_middleware(
 
 register_exception_handlers(app)
 
+# Deny by default: every router needs the API key. The exceptions are /ready (inside the health router)
+# and the provider webhooks in `triggers`, which verify their own signatures.
+authenticated = [Depends(require_api_key)]
 app.include_router(health.router)
-app.include_router(connectors.router)
-app.include_router(connections.router)
-app.include_router(workflows.router)
-app.include_router(instances.router)
+app.include_router(connectors.router, dependencies=authenticated)
+app.include_router(connections.router, dependencies=authenticated)
+app.include_router(workflows.router, dependencies=authenticated)
+app.include_router(instances.router, dependencies=authenticated)
 app.include_router(triggers.router)
-app.include_router(admin.router)
+app.include_router(admin.router, dependencies=authenticated)
 
 
 @app.middleware("http")
