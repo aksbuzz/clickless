@@ -8,8 +8,8 @@ trello_connector = Connector(
     connection_schema={
         "type": "object",
         "properties": {
-            "api_key": {"type": "string", "title": "API Key"},
-            "api_token": {"type": "string", "title": "API Token"},
+            "api_key": {"type": "string", "title": "API Key", "writeOnly": True},
+            "api_token": {"type": "string", "title": "API Token", "writeOnly": True},
         },
         "required": ["api_key", "api_token"],
     },

@@ -68,10 +68,10 @@ test('a 401 on a write is handled the same way', async () => {
   assert.equal(getApiKey(), null);
 });
 
-test('other errors are unchanged and keep the key', async () => {
+test('other errors show the API message and keep the key', async () => {
   setApiKey('k-123');
   stubFetch(404, { detail: 'Workflow not found' }, 'Not Found');
-  await assert.rejects(() => api.getWorkflow('x'), /404 Not Found/);
+  await assert.rejects(() => api.getWorkflow('x'), /Workflow not found/);
   stubFetch(409, { detail: 'Workflow name already exists' });
   await assert.rejects(() => api.createWorkflow('n', {}), /Workflow name already exists/);
   assert.equal(getApiKey(), 'k-123');

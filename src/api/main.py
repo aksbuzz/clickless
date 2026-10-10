@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from uuid import uuid4
 
+from src.shared import credentials
 from src.shared.logging_config import log
 from src.shared.metrics import http_requests_total, http_request_duration_seconds
 
@@ -16,6 +17,7 @@ from src.api.routers import health, connectors, connections, workflows, instance
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     validate_auth_config()   # refuse to start without a strong API key
+    credentials.check_configured()   # ... or without the key that protects connection credentials
     yield
 
 

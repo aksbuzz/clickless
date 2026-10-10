@@ -5,9 +5,11 @@ interface SchemaFormProps {
   values: Record<string, unknown>;
   onChange: (values: Record<string, unknown>) => void;
   readOnly?: boolean;
+  /** Secret fields that already hold a stored value; they show as saved and are left blank to keep. */
+  secretsSet?: string[];
 }
 
-export function SchemaForm({ schema, values, onChange, readOnly = false }: SchemaFormProps) {
+export function SchemaForm({ schema, values, onChange, readOnly = false, secretsSet = [] }: SchemaFormProps) {
   const properties = schema.properties ?? {};
   const required = new Set(schema.required ?? []);
   const entries = Object.entries(properties);
@@ -30,6 +32,7 @@ export function SchemaForm({ schema, values, onChange, readOnly = false }: Schem
           value={values[key]}
           required={required.has(key)}
           readOnly={readOnly}
+          saved={secretsSet.includes(key)}
           onChange={(v) => handleChange(key, v)}
         />
       ))}
@@ -43,10 +46,11 @@ interface SchemaFieldProps {
   value: unknown;
   required: boolean;
   readOnly: boolean;
+  saved: boolean;
   onChange: (value: unknown) => void;
 }
 
-function SchemaField({ name, prop, value, required, readOnly, onChange }: SchemaFieldProps) {
+function SchemaField({ name, prop, value, required, readOnly, saved, onChange }: SchemaFieldProps) {
   const label = prop.title ?? name;
   const isLongText = prop.description &&
     /code|body|query|message|text|description/i.test(prop.description);
@@ -56,7 +60,10 @@ function SchemaField({ name, prop, value, required, readOnly, onChange }: Schema
     <div>
       <label className="block text-sm font-medium text-gray-700 mb-1">
         {label}
-        {required && <span className="text-red-500 ml-0.5">*</span>}
+        {required && !saved && <span className="text-red-500 ml-0.5">*</span>}
+        {saved && (
+          <span className="ml-2 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">saved</span>
+        )}
         {supportsTemplates && (
           <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">
             templates
@@ -64,7 +71,17 @@ function SchemaField({ name, prop, value, required, readOnly, onChange }: Schema
         )}
       </label>
 
-      {prop.enum ? (
+      {prop.writeOnly ? (
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={(value as string) ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={saved ? 'Saved. Leave blank to keep it.' : ''}
+          disabled={readOnly}
+          className="w-full border border-gray-300 rounded px-3 py-1.5 text-sm disabled:bg-gray-50"
+        />
+      ) : prop.enum ? (
         <select
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}

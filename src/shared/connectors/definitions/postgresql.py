@@ -8,7 +8,7 @@ postgresql_connector = Connector(
     connection_schema={
         "type": "object",
         "properties": {
-            "connection_string": {"type": "string", "title": "Connection String", "description": "PostgreSQL connection URI (e.g., postgresql://user:pass@host:5432/db)"},
+            "connection_string": {"type": "string", "title": "Connection String", "description": "PostgreSQL connection URI (e.g., postgresql://user:pass@host:5432/db)", "writeOnly": True},
         },
         "required": ["connection_string"],
     },

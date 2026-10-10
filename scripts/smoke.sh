@@ -78,26 +78,36 @@ check_security() {
   port_closed 5432 "PostgreSQL"
 }
 
+# create_and_start <name> <definition json>   prints the new instance id
+create_and_start() {
+  curl -fsS -X POST "$API/workflows" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d "{\"name\": \"$1\", \"definition\": $2}" >/dev/null || fail "could not create workflow $1"
+  resp="$(curl -fsS -X POST "$API/workflows/$1/run" -H "$AUTH" -H 'Content-Type: application/json' -d '{"data": {}}')" \
+    || fail "could not start workflow $1"
+  printf '%s' "$resp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])'
+}
+
+# wait_until_failed <instance id> <what the step must not have done>
+wait_until_failed() {
+  i=0
+  while :; do
+    state="$(curl -fsS -H "$AUTH" "$API/instances/$1" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+    case "$state" in
+      failed) return 0 ;;
+      completed) fail "$2" ;;
+    esac
+    i=$((i + 1))
+    [ "$i" -le 60 ] || fail "instance $1 is still '$state' after 60 s (a failed step must fail its instance)"
+    sleep 1
+  done
+}
+
 # A workflow that tries to reach an internal service must fail visibly, not hang and not connect.
 check_outbound_guard() {
   echo "Outbound request guard:"
-  name="smoke_guard_$(date +%s)"
   definition='{"trigger":{"connector_id":"http","trigger_id":"http_request_received","config":{}},"start_at":"probe","steps":{"probe":{"type":"action","connector_id":"http","action_id":"http_request","config":{"url":"http://api:8000/ready","method":"GET"},"next":"end"}}}'
-  curl -fsS -X POST "$API/workflows" -H "$AUTH" -H 'Content-Type: application/json'     -d "{\"name\": \"$name\", \"definition\": $definition}" >/dev/null || fail "could not create the guard probe workflow"
-  resp="$(curl -fsS -X POST "$API/workflows/$name/run" -H "$AUTH" -H 'Content-Type: application/json' -d '{"data": {}}')"     || fail "could not start the guard probe workflow"
-  id="$(printf '%s' "$resp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])')"
-
-  i=0
-  while :; do
-    state="$(curl -fsS -H "$AUTH" "$API/instances/$id" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
-    case "$state" in
-      failed) break ;;
-      completed) fail "a call to the internal API service succeeded; the outbound guard is not working" ;;
-    esac
-    i=$((i + 1))
-    [ "$i" -le 60 ] || fail "guard probe instance $id is still '$state' after 60 s (a failed step must fail its instance)"
-    sleep 1
-  done
+  id="$(create_and_start "smoke_guard_$(date +%s)" "$definition")"
+  wait_until_failed "$id" "a call to the internal API service succeeded; the outbound guard is not working"
 
   curl -fsS -H "$AUTH" "$API/instances/$id/steps" | "$PY" -c '
 import json, sys
@@ -105,6 +115,40 @@ errors = [s.get("error_details") or "" for s in json.load(sys.stdin)]
 assert any("Blocked outbound request" in e for e in errors), "no blocked-request reason in %r" % (errors,)
 ' || fail "instance $id failed, but not because the request was blocked"
   echo "  ok: a call to an internal service fails with the reason shown"
+}
+
+# A stored credential is never returned by the API, yet the worker still gets it decrypted when a step runs.
+# The step connects to the stack's own database through the connection: the outbound guard refuses it, and
+# the reason names the host, which only happens if the stored (encrypted) string was decrypted and parsed.
+check_credentials() {
+  echo "Connection credentials:"
+  secret="postgresql://smoke:smoke-secret-$(date +%s)@postgres:5432/none"
+  cresp="$(curl -fsS -X POST "$API/connections" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d "{\"connector_id\": \"postgresql\", \"name\": \"smoke_conn_$(date +%s)\", \"config\": {\"connection_string\": \"$secret\"}}")" \
+    || fail "could not create a connection"
+  cid="$(printf '%s' "$cresp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["connection_id"])')"
+
+  shown="$(curl -fsS -H "$AUTH" "$API/connections/$cid")" || fail "could not read connection $cid"
+  case "$shown" in *smoke-secret-*) fail "the API returned a stored credential: $shown" ;; esac
+  printf '%s' "$shown" | "$PY" -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["config"] == {} and d["secrets_set"] == ["connection_string"], d
+' || fail "connection $cid should show no secret value and list connection_string as set: $shown"
+  case "$(curl -fsS -H "$AUTH" "$API/connections")" in *smoke-secret-*) fail "the connection list returned a stored credential" ;; esac
+  echo "  ok: the API does not return a stored credential"
+
+  definition="{\"trigger\":{\"connector_id\":\"http\",\"trigger_id\":\"http_request_received\",\"config\":{}},\"start_at\":\"probe\",\"steps\":{\"probe\":{\"type\":\"action\",\"connector_id\":\"postgresql\",\"action_id\":\"postgresql_query\",\"connection_id\":\"$cid\",\"config\":{\"query\":\"SELECT 1\"},\"next\":\"end\"}}}"
+  id="$(create_and_start "smoke_credentials_$(date +%s)" "$definition")"
+  wait_until_failed "$id" "a query to the internal database succeeded; the outbound guard is not working"
+  steps="$(curl -fsS -H "$AUTH" "$API/instances/$id/steps")"
+  printf '%s' "$steps" | "$PY" -c '
+import json, sys
+errors = [s.get("error_details") or "" for s in json.load(sys.stdin)]
+assert any("Blocked outbound" in e and "'postgres'" in e for e in errors), "step did not get the decrypted connection string: %r" % (errors,)
+' || fail "instance $id did not run with the decrypted credential: $steps"
+  case "$steps$(curl -fsS -H "$AUTH" "$API/instances/$id")" in *smoke-secret-*) fail "the credential leaked into the instance or its steps" ;; esac
+  echo "  ok: a step receives the decrypted credential, and it does not leak into the run"
 }
 
 # run_case <quantity> <expected priority> <expected shipping_days>
@@ -151,6 +195,7 @@ assert steps and not bad, "steps not completed: %r" % (bad,)
 wait_for_health
 check_security
 check_outbound_guard
+check_credentials
 run_case 150 high 1
 run_case 30 normal 5
 echo "SMOKE OK"

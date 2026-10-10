@@ -24,6 +24,7 @@ services:
     command: gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
     environment:
       API_KEY: ${API_KEY:?run scripts/init-env.sh to create .env}
+      SECRETS_KEY: ${SECRETS_KEY:?run scripts/init-env.sh to create .env, or sh scripts/init-env.sh --upgrade to add the key to an existing one}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
       TRELLO_API_SECRET: ${TRELLO_API_SECRET:-}
@@ -50,6 +51,8 @@ services:
     env_file: .env
     command: python -m src.worker.main
     stop_grace_period: 45s
+    environment:
+      SECRETS_KEY: ${SECRETS_KEY:?run scripts/init-env.sh to create .env, or sh scripts/init-env.sh --upgrade to add the key to an existing one}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9100/metrics', timeout=3)"]
       interval: 15s

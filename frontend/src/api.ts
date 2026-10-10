@@ -27,9 +27,18 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   return res;
 }
 
+/** An Error whose message is what the API said was wrong: `validation_errors`, a `detail` string or list, else the status line. */
+async function failure(res: Response): Promise<Error> {
+  const body = await res.json().catch(() => null);
+  const messages: unknown = body?.validation_errors ?? body?.detail;
+  if (typeof messages === 'string' && messages) return new Error(messages);
+  if (Array.isArray(messages) && messages.length > 0) return new Error(messages.map(String).join('; '));
+  return new Error(`${res.status} ${res.statusText}`);
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await request(path);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) throw await failure(res);
   return res.json();
 }
 
@@ -39,16 +48,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => null);
-    const detail = errBody?.detail;
-    const message = typeof detail === 'string'
-      ? detail
-      : Array.isArray(detail)
-        ? detail.join('; ')
-        : `${res.status} ${res.statusText}`;
-    throw new Error(message);
-  }
+  if (!res.ok) throw await failure(res);
   return res.json();
 }
 
@@ -58,29 +58,13 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => null);
-    const detail = errBody?.detail;
-    const message = typeof detail === 'string'
-      ? detail
-      : Array.isArray(detail)
-        ? detail.join('; ')
-        : `${res.status} ${res.statusText}`;
-    throw new Error(message);
-  }
+  if (!res.ok) throw await failure(res);
   return res.json();
 }
 
 async function del<T>(path: string): Promise<T> {
   const res = await request(path, { method: 'DELETE' });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => null);
-    const detail = errBody?.detail;
-    const message = typeof detail === 'string'
-      ? detail
-      : `${res.status} ${res.statusText}`;
-    throw new Error(message);
-  }
+  if (!res.ok) throw await failure(res);
   return res.json();
 }
 

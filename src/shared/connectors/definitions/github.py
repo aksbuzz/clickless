@@ -8,7 +8,7 @@ github_connector = Connector(
     connection_schema={
         "type": "object",
         "properties": {
-            "token": {"type": "string", "title": "Personal Access Token"},
+            "token": {"type": "string", "title": "Personal Access Token", "writeOnly": True},
         },
         "required": ["token"],
     },

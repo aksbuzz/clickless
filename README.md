@@ -33,7 +33,7 @@ cd workflow_automate
 
 ### Step 2: Setup environment
 
-Generate your settings. This creates `.env` with random passwords and an API key, and prints the key:
+Generate your settings. This creates `.env` with random passwords, an API key and an encryption key, and prints the API key:
 
 ```bash
 sh scripts/init-env.sh
@@ -69,8 +69,11 @@ Both listen on this machine only. Set `BIND_ADDRESS=0.0.0.0` in `.env` to expose
 | Setting (in `.env`) | What it does |
 |---|---|
 | `API_KEY` | The shared key for the API and UI. At least 16 characters; the API will not start without it. |
+| `SECRETS_KEY` | Encrypts the credentials stored in connections (GitHub tokens, Slack webhook URLs and so on). A Fernet key; the API and the worker will not start without one. **Keep a copy of `.env`**: without this key stored credentials cannot be read and must be entered again. |
 | `GITHUB_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`, `TRELLO_API_SECRET` + `TRELLO_CALLBACK_URL` | Secrets used to verify webhooks from each provider. A provider's webhook is **rejected while its secret is empty**. Point providers at `http://<your-host>:8000/triggers/<github\|slack\|trello>/webhook`. |
 | `OUTBOUND_ALLOW_HOSTS` | Workflows may only call public addresses. List internal hosts (comma-separated) that they may also call, for example a private database. |
+
+Credentials saved in a connection are write-only: the UI and API never show them again (the form shows "saved" and keeps the value when left blank), and they are stored encrypted. To change `SECRETS_KEY` put the new key first, keep the old one after a comma (`SECRETS_KEY=new,old`), restart and run `docker compose run --rm api python -m src.api.encrypt_connections`; then the old key can be removed. Credentials typed directly into a step instead of a connection are not protected, so use connections. See [ADR 0011](docs/adr/0011-connection-credentials-stored-in-postgres.md).
 
 PostgreSQL is not published to the host. For a local database browser run `docker compose --profile dev-tools up` (adminer on http://127.0.0.1:8080).
 
@@ -276,7 +279,7 @@ CI (`.github/workflows/ci.yml`) runs all three.
 
 ### Add a new connector
 
-1. Describe it in `src/shared/connectors/definitions/myapp.py` (triggers, actions and their config fields, which the UI uses to build forms) and import it in `definitions/__init__.py`.
+1. Describe it in `src/shared/connectors/definitions/myapp.py` (triggers, actions and their config fields, which the UI uses to build forms) and import it in `definitions/__init__.py`. Mark every credential field in its `connection_schema` with `"writeOnly": True` so it is encrypted and never returned; `tests/unit/test_connection_schemas.py` lists them and fails for a connector that is not covered.
 2. Implement each action in `src/worker/handlers/myapp.py` with the `@action("action_id")` decorator and import the module in `src/worker/registry.py`. A handler receives its config with `{{templates}}` already resolved by the engine; it must not resolve them again. A handler that takes SQL or a connection string lists those keys in `untemplated_keys` so they are never built from data.
 3. Anything that connects out on a user's behalf (URLs, hosts) must go through `src/shared/net_guard.py`.
 4. A webhook trigger also needs a handler in `src/api/trigger_handlers/` that verifies the provider's signature.
@@ -290,6 +293,8 @@ docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB
 ```
 
 Upgrading from the version that used RabbitMQ, Redis and Celery: stop the stack, apply migration `002_job_queue.sql` (it turns unfinished instances into jobs so they resume), then start the new stack. Remove the old `RABBITMQ_*` and `REDIS_*` settings from `.env`.
+
+Upgrading to encrypted connection credentials: run `sh scripts/init-env.sh --upgrade` to add `SECRETS_KEY` to your existing `.env` (keep a copy), restart the stack, then run `docker compose run --rm api python -m src.api.encrypt_connections` to encrypt the credentials already stored. Until you do, they still work as plaintext and are encrypted the next time each connection is saved.
 
 ---
 

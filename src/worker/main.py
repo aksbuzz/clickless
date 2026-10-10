@@ -5,6 +5,7 @@
 Settings (environment): WORKER_CONCURRENCY (threads, default 8), JOB_LEASE_SECONDS (how long a job is held
 before another worker may take it, default 300), WORKER_IDLE_POLL_SECONDS (safety wake-up, default 5),
 WORKER_METRICS_PORT (Prometheus endpoint, default 9100), DB_POOL_MAX (default WORKER_CONCURRENCY + 2, at most 16).
+SECRETS_KEY is required: it decrypts the credentials stored in connections.
 """
 import os
 import signal
@@ -13,6 +14,7 @@ import threading
 from prometheus_client import start_http_server
 
 from src.engine.worker import Worker
+from src.shared import credentials
 from src.shared.db import reset_pool
 from src.shared.logging_config import log
 
@@ -44,6 +46,7 @@ def size_connection_pool(concurrency: int) -> None:
 
 
 def main() -> None:
+    credentials.check_configured()   # steps cannot read their connections without it
     settings = worker_settings()
     size_connection_pool(settings["concurrency"])
 
