@@ -21,11 +21,11 @@ beforeEach(() => {
   setApiKey('k');
 });
 
-test('a create that fails validation shows the messages the API returned', async () => {
+test('a create that fails validation shows each message the API returned on its own line', async () => {
   stubFetch(400, { validation_errors: ['Personal Access Token is required', "Unknown field 'password'"] });
   await assert.rejects(
     api.createConnection('github', 'main', {}),
-    { message: "Personal Access Token is required; Unknown field 'password'" },
+    { message: "Personal Access Token is required\nUnknown field 'password'" },
   );
 });
 
@@ -39,9 +39,9 @@ test('a plain detail message is still shown', async () => {
   await assert.rejects(api.createConnection('github', 'main', { token: 'x' }), { message: "Connection name 'main' already exists for connector 'github'" });
 });
 
-test('FastAPI-style detail lists are joined', async () => {
+test('FastAPI-style detail lists are shown one per line', async () => {
   stubFetch(422, { detail: ['first', 'second'] }, 'Unprocessable Entity');
-  await assert.rejects(api.createConnection('github', 'main', {}), { message: 'first; second' });
+  await assert.rejects(api.createConnection('github', 'main', {}), { message: 'first\nsecond' });
 });
 
 test('without a readable body the status line is shown', async () => {

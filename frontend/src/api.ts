@@ -27,12 +27,12 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   return res;
 }
 
-/** An Error whose message is what the API said was wrong: `validation_errors`, a `detail` string or list, else the status line. */
+/** An Error whose message is what the API said was wrong: `validation_errors`, a `detail` string or list (one per line), else the status line. */
 async function failure(res: Response): Promise<Error> {
   const body = await res.json().catch(() => null);
   const messages: unknown = body?.validation_errors ?? body?.detail;
   if (typeof messages === 'string' && messages) return new Error(messages);
-  if (Array.isArray(messages) && messages.length > 0) return new Error(messages.map(String).join('; '));
+  if (Array.isArray(messages) && messages.length > 0) return new Error(messages.map(String).join('\n'));
   return new Error(`${res.status} ${res.statusText}`);
 }
 

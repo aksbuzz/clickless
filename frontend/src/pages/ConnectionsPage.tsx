@@ -235,7 +235,7 @@ export function ConnectionsPage() {
           )}
 
           {formError && (
-            <p className="text-red-600 text-sm">{formError}</p>
+            <p className="text-red-600 text-sm whitespace-pre-line">{formError}</p>
           )}
 
           <div className="flex justify-end gap-2 pt-2">
