@@ -245,7 +245,7 @@ export function WorkflowBuilderPage() {
       </div>
 
       {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-red-700 text-sm whitespace-pre-line">
           {error}
         </div>
       )}

@@ -38,7 +38,7 @@ Negative / known gaps:
 
 - The two sides are linked only by the `action_id` string, with no startup or test check that every declared action has a handler. A mismatch fails the step at run time with `no handler registered for action '...'`.
 - Lookup is global by `action_id`, not `(connector_id, action_id)`; ids must be unique across connectors, and `connector_id` in a step is never checked.
-- The `flow_control` connector declares `branch`, `delay` and `wait_for_event` as actions, but they are engine step kinds with no handler; using them as `type: action` passes validation and fails at run time.
+- The `flow_control` connector declares `branch`, `delay` and `wait_for_event` as actions, but they are engine step kinds with no handler; saving one as a `type: action` step is refused with a pointer to the right `type` ([ADR 0023](0023-validate-workflow-definitions-when-they-are-saved.md)).
 - Two legacy handlers, `initial_step` and `final_step`, have no connector definition.
 - Handlers are called concurrently from several threads and must be stateless; nothing enforces that.
 

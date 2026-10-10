@@ -35,8 +35,8 @@ Positive:
 
 Negative / known gaps:
 
-- Error handling in `api.ts` ignores `validation_errors` and non-string `detail`, so users see generic messages or `[object Object]`. Polling has no stale-response guard and a single failed poll replaces the page with an error.
-- The builder has no client-side validation, edits `next` links without keeping them consistent when steps are reordered, and loses focus while renaming steps. Inline credentials remain in definitions when a connection is selected.
+- `api.ts` turns an error response into the message the API gave (`validation_errors`, a `detail` string or list, one per line), else the status line. Polling has no stale-response guard and a single failed poll replaces the page with an error.
+- The builder has no client-side validation (the API refuses a bad definition and lists every problem, [ADR 0023](0023-validate-workflow-definitions-when-they-are-saved.md)), edits `next` links without keeping them consistent when steps are reordered, and loses focus while renaming steps. Inline credentials remain in definitions when a connection is selected.
 - There is no ErrorBoundary and almost no accessibility attributes. Component behaviour is covered only by the lint and build, not by tests. `npm audit` reports vulnerable dependencies.
 - nginx runs as root. The API key is held in browser JavaScript for the session, so an XSS bug would expose it.
 - The README used to advertise a drag-and-drop builder; none exists, and the README no longer says so.

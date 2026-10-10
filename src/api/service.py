@@ -2,6 +2,7 @@ import structlog
 
 from src.shared.logging_config import log
 from src.engine import runtime
+from src.engine.validation import validate_definition
 from src.shared import credentials
 from src.shared.connectors.registry import ConnectorRegistry
 from src.shared.db import db_cursor
@@ -32,7 +33,7 @@ class WorkflowManagementService:
     # --- Workflow CRUD ---
 
     def create_workflow(self, name: str, definition: dict) -> dict:
-        errors = self.connector_registry.validate_definition(definition)
+        errors = validate_definition(definition, self.connector_registry)
         if errors:
             raise ValidationError(errors)
 
@@ -66,7 +67,7 @@ class WorkflowManagementService:
         return result
 
     def create_version(self, workflow_id: str, definition: dict) -> dict:
-        errors = self.connector_registry.validate_definition(definition)
+        errors = validate_definition(definition, self.connector_registry)
         if errors:
             raise ValidationError(errors)
 

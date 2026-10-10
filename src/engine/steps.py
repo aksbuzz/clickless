@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, Tuple
 from src.shared.connectors.template import resolve_config, resolve_field
 
 STEP_KINDS = ("action", "branch", "delay", "wait_for_event")
+OPERATORS = ("eq", "neq", "gt", "gte", "lt", "lte", "contains", "exists")   # what evaluate_condition understands
 
 
 def evaluate_condition(data: dict, condition: dict) -> bool:

@@ -23,18 +23,6 @@ class ConnectorRegistry:
                     return action
         return None
 
-    def validate_definition(self, definition: dict) -> list[str]:
-        """Validate that all action_ids in a workflow definition exist. Returns list of errors."""
-        errors = []
-        steps = definition.get("steps", {})
-        for step_name, step_def in steps.items():
-            step_type = step_def.get("type", "action")
-            if step_type == "action":
-                action_id = step_def.get("action_id")
-                if action_id and not self.get_action(action_id):
-                    errors.append(f"Step '{step_name}': unknown action_id '{action_id}'")
-        return errors
-
 
 # Module-level singleton
 registry = ConnectorRegistry()

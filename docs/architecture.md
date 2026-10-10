@@ -31,7 +31,7 @@ There is no message broker, cache or scheduler process. A job is a row; waiting,
 
 ### Workflow definition
 
-A workflow is a versioned JSON document in `workflow_versions.definition`. Saving a new version deactivates the old one; instances stay pinned to the version they started on.
+A workflow is a versioned JSON document in `workflow_versions.definition`. Saving a new version deactivates the old one; instances stay pinned to the version they started on. A definition is checked when it is saved (links between steps, step fields, the trigger, loops of only branch and delay steps) and the API lists every problem at once ([ADR 0023](adr/0023-validate-workflow-definitions-when-they-are-saved.md)).
 
 ```json
 {
