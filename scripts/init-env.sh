@@ -32,20 +32,13 @@ value() {
 
 API_KEY="$(rand)"
 PG_PASSWORD="$(rand)"
-MQ_PASSWORD="$(rand)"
-REDIS_PASSWORD="$(rand)"
 PG_USER="$(value POSTGRES_USER)"
 PG_DB="$(value POSTGRES_DB)"
-MQ_USER="$(value RABBITMQ_DEFAULT_USER)"
 
 sed \
   -e "s|^API_KEY=.*|API_KEY=$API_KEY|" \
   -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$PG_PASSWORD|" \
   -e "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://$PG_USER:$PG_PASSWORD@postgres/$PG_DB|" \
-  -e "s|^RABBITMQ_DEFAULT_PASS=.*|RABBITMQ_DEFAULT_PASS=$MQ_PASSWORD|" \
-  -e "s|^RABBITMQ_URL=.*|RABBITMQ_URL=amqp://$MQ_USER:$MQ_PASSWORD@rabbitmq:5672/|" \
-  -e "s|^REDIS_PASSWORD=.*|REDIS_PASSWORD=$REDIS_PASSWORD|" \
-  -e "s|^REDIS_URL=.*|REDIS_URL=redis://:$REDIS_PASSWORD@redis:6379/0|" \
   .env.example > .env
 chmod 600 .env 2>/dev/null || true
 

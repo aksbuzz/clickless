@@ -45,7 +45,7 @@ expect_status() {  # expect_status <expected> <description> <curl args...>
 }
 
 wait_for_health() {
-  echo "Waiting for $API/health (postgres, redis, rabbitmq and celery workers) ..."
+  echo "Waiting for $API/health (postgres and the job queue) ..."
   i=0
   until curl -fsS -H "$AUTH" "$API/health" >/dev/null 2>&1; do
     i=$((i + 1))
@@ -68,15 +68,13 @@ check_security() {
   echo "Security checks:"
   expect_status 401 "API rejects a request without a key" "$API/workflows"
   expect_status 401 "API rejects a wrong key" -H "Authorization: Bearer not-the-key" "$API/workflows"
-  expect_status 401 "admin endpoint needs the key" -X POST "$API/admin/recover"
+  expect_status 401 "instance listing needs the key" "$API/instances"
   expect_status 200 "readiness probe stays public" "$API/ready"
   expect_status 401 "unsigned GitHub webhook is rejected" -X POST -d '{}' "$API/triggers/github/webhook"
   expect_status 401 "unsigned Slack webhook is rejected" -X POST -d '{}' "$API/triggers/slack/webhook"
-  expect_status 404 "UI proxy does not expose /admin" -X POST -H "$AUTH" "$UI/api/admin/recover"
+  expect_status 404 "UI proxy does not expose /webhooks" -X POST -H "$AUTH" "$UI/api/webhooks/anything"
   expect_status 404 "UI proxy does not expose /metrics" -H "$AUTH" "$UI/api/metrics"
   expect_status 200 "UI proxy passes API calls through" -H "$AUTH" "$UI/api/workflows"
-  port_closed 5672 "RabbitMQ"
-  port_closed 6379 "Redis"
   port_closed 5432 "PostgreSQL"
 }
 
@@ -84,7 +82,7 @@ check_security() {
 check_outbound_guard() {
   echo "Outbound request guard:"
   name="smoke_guard_$(date +%s)"
-  definition='{"trigger":{"connector_id":"http","trigger_id":"http_request_received","config":{}},"start_at":"probe","steps":{"probe":{"type":"action","connector_id":"http","action_id":"http_request","config":{"url":"http://rabbitmq:15672/api/overview","method":"GET"},"next":"end"}}}'
+  definition='{"trigger":{"connector_id":"http","trigger_id":"http_request_received","config":{}},"start_at":"probe","steps":{"probe":{"type":"action","connector_id":"http","action_id":"http_request","config":{"url":"http://api:8000/ready","method":"GET"},"next":"end"}}}'
   curl -fsS -X POST "$API/workflows" -H "$AUTH" -H 'Content-Type: application/json'     -d "{\"name\": \"$name\", \"definition\": $definition}" >/dev/null || fail "could not create the guard probe workflow"
   resp="$(curl -fsS -X POST "$API/workflows/$name/run" -H "$AUTH" -H 'Content-Type: application/json' -d '{"data": {}}')"     || fail "could not start the guard probe workflow"
   id="$(printf '%s' "$resp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])')"
@@ -94,7 +92,7 @@ check_outbound_guard() {
     state="$(curl -fsS -H "$AUTH" "$API/instances/$id" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
     case "$state" in
       failed) break ;;
-      completed) fail "a call to the internal RabbitMQ admin API succeeded; the outbound guard is not working" ;;
+      completed) fail "a call to the internal API service succeeded; the outbound guard is not working" ;;
     esac
     i=$((i + 1))
     [ "$i" -le 60 ] || fail "guard probe instance $id is still '$state' after 60 s (a failed step must fail its instance)"

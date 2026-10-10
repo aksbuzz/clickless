@@ -8,27 +8,10 @@ services:
     environment:
       LOG_LEVEL: debug
 
-  engine:
-    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q orchestration_queue -n engine@%h
-    volumes:
-      - ./src:/app/src
-
+  # The worker does not reload by itself: after editing code, run `docker compose restart worker`.
   worker:
-    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q actions_queue -n worker@%h
     volumes:
       - ./src:/app/src
-    deploy:
-      replicas: 1
-
-  relay:
-    command: python src/relay/entrypoint/main.py
-    volumes:
-      - ./src:/app/src
-
-  # RabbitMQ management UI, on this machine only.
-  rabbitmq:
-    ports:
-      - "127.0.0.1:15672:15672"
 
   # Database browser, off by default: docker compose --profile dev-tools up
   adminer:
