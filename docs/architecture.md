@@ -98,7 +98,7 @@ sequenceDiagram
 
 1. **Start.** The API inserts the instance and its first job in one transaction and notifies the workers. Webhook deliveries from GitHub, Slack and Trello are verified first, then start every matching workflow the same way.
 2. **Claim.** A worker thread runs `UPDATE jobs ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)`. The job becomes `running` with a lease (`locked_until`). Several workers can claim at once without coordination.
-3. **Begin.** In a short transaction the thread locks the instance row, closes any attempt a dead worker left open, records the new attempt, and loads the step's connection credentials.
+3. **Begin.** In a short transaction the thread locks the instance row, closes any attempt a dead worker left open, records the new attempt, and loads and decrypts the step's connection credentials.
 4. **Run.** The engine resolves `{{templates}}` and calls the handler. No database transaction or lock is held while it runs, so a slow HTTP call costs no connection.
 5. **Finish.** One transaction: it locks the instance and checks the job's lease is still this worker's. If so it stores the step's data, marks the attempt completed, deletes the job and works out what comes next. Branches are evaluated and delays added up right here; the first action or wait step becomes the next job. If the step failed, it either re-queues the same job after `retry.delay_seconds` or marks the job dead and the instance failed, with the error text.
 6. **Repeat.** The same thread claims again. No notification is needed for the job it just queued.
@@ -116,7 +116,7 @@ Cancelling and resuming (`cancel`, `events`) take the same instance row lock, so
 | `workflow_instances` | One row per run: status, current step, accumulated data, request id |
 | `workflow_step_executions` | One row per attempt: status, attempt number, data changed, error text |
 | `jobs` | The queue: step to run, `run_at`, lease (`locked_by`, `locked_until`), attempt and claim counts |
-| `connections` | Stored connector credentials (plaintext JSONB; see [ADR 0011](adr/0011-connection-credentials-stored-in-postgres.md)) |
+| `connections` | Stored connector credentials: secret fields encrypted, never returned by the API (see [ADR 0011](adr/0011-connection-credentials-stored-in-postgres.md)) |
 
 `infrastructure/postgres/init.sql` creates all of it, plus a seeded example workflow. Migrations for existing databases live in `infrastructure/postgres/migrations/`.
 

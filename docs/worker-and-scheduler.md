@@ -59,7 +59,7 @@ class MyHandler:
         return ActionResult(ActionStatus.SUCCESS, data)       # or FAILURE with error_message
 ```
 
-- `config` arrives with `{{templates}}` already resolved, and with the step's stored connection merged in (the step's own keys win). Do not resolve templates again.
+- `config` arrives with `{{templates}}` already resolved, and with the step's stored connection merged in (the step's own keys win). The engine decrypts the connection's secrets just before the handler runs, which needs `SECRETS_KEY` (the worker will not start without it); if a secret cannot be decrypted the step fails and the handler is never called. Do not resolve templates again.
 - `data` is a copy of the instance data. Return the full dict you want the instance to have; the engine stores only what changed, and removes keys you removed.
 - Handlers run concurrently on different threads and must be stateless. They do not touch the database; the engine does that around them.
 - Anything that connects out for the workflow author must pass through `src/shared/net_guard.py`.

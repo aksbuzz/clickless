@@ -20,9 +20,9 @@ The API had no authentication at all (audit F-03). Anyone who could reach port 8
 
 **nginx.** The UI proxy exposes only what the UI uses. `/api/metrics`, `/api/triggers` and `/api/webhooks` return 404 through it (webhooks belong on the API port). It adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a Content-Security-Policy, forwards `X-Forwarded-*`, and resolves the API at request time so a recreated container is picked up.
 
-**Compose.** PostgreSQL is not published to the host. Every secret comes from `.env`, and Compose refuses to start with an empty one, with a message pointing at `scripts/init-env.sh`, which writes `.env` with random values (API key and database password) and prints the API key. The API and UI bind to `127.0.0.1` unless `BIND_ADDRESS` says otherwise. Adminer is behind the `dev-tools` profile and binds to localhost. Services wait for Postgres and restart unless stopped, and the API and worker have health checks.
+**Compose.** PostgreSQL is not published to the host. Every secret comes from `.env`, and Compose refuses to start with an empty one, with a message pointing at `scripts/init-env.sh`, which writes `.env` with random values (API key, database password and the key that encrypts stored credentials, ADR 0011) and prints the API key. The API and UI bind to `127.0.0.1` unless `BIND_ADDRESS` says otherwise. Adminer is behind the `dev-tools` profile and binds to localhost. Services wait for Postgres and restart unless stopped, and the API and worker have health checks.
 
-**Checks.** `scripts/smoke.sh` asserts all of this against a running stack: 401 without or with a wrong key, unsigned webhooks rejected, the webhook and metrics paths not reachable through the UI proxy, the database port closed, a workflow that calls the internal API service fails as blocked (ADR 0021), and the seeded workflow still completes.
+**Checks.** `scripts/smoke.sh` asserts all of this against a running stack: 401 without or with a wrong key, a stored credential never returned by the API, unsigned webhooks rejected, the webhook and metrics paths not reachable through the UI proxy, the database port closed, a workflow that calls the internal API service fails as blocked (ADR 0021), and the seeded workflow still completes.
 
 ## Alternatives considered
 
@@ -44,8 +44,8 @@ Negative / follow-up:
 - The key is held in browser JavaScript for the session, so an XSS bug would expose it; the CSP and the absence of raw HTML injection reduce that risk.
 - No rate limiting or lockout on key guesses; the 24-byte random key makes guessing impractical, but the endpoint should sit behind TLS and, ideally, a rate limiter.
 - Plain HTTP between the browser and nginx: use TLS in front for anything beyond localhost.
-- Connection credentials are still stored in plaintext and returned by `GET /connections/{id}` to anyone with the key (ADR 0011).
-- Upgrading an existing install needs the new variables (`sh scripts/init-env.sh`); the old `RABBITMQ_*` and `REDIS_*` settings are no longer used.
+- Connection credentials are encrypted at rest and never returned by the API (ADR 0011), but anyone with the key can still run steps that use them.
+- An existing `.env` needs `API_KEY` and `SECRETS_KEY` (`sh scripts/init-env.sh --upgrade` adds the latter without touching the rest); the old `RABBITMQ_*` and `REDIS_*` settings are no longer used.
 
 ## References
 
