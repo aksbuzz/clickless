@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from src.engine.steps import evaluate_condition, retry_policy, step_kind
+from src.shared import credentials
 from src.shared.errors import InstanceNotFoundError, InvalidStateError, WorkflowNotFoundError
 from src.shared.logging_config import log
 from src.shared.metrics import (
@@ -227,7 +228,10 @@ def begin_step(cur, job: dict) -> Optional[StepWork]:
         cur.execute("SELECT config FROM connections WHERE id = %s", (connection_id,))
         row = cur.fetchone()
         if row and row["config"]:
-            merged = dict(row["config"])
+            try:
+                merged = credentials.reveal(row["config"])   # decrypted here, in memory, only for this step
+            except (credentials.SecretDecryptionError, credentials.SecretsKeyError) as exc:
+                merged, pre_error = {}, f"connection '{connection_id}': {exc}"
             merged.update(config)          # the step's own values win over the connection's
             config = merged
         else:

@@ -2,6 +2,7 @@ import structlog
 
 from src.shared.logging_config import log
 from src.engine import runtime
+from src.shared import credentials
 from src.shared.connectors.registry import ConnectorRegistry
 from src.shared.db import db_cursor
 from src.shared.triggers.models import TriggerEvent
@@ -184,9 +185,15 @@ class WorkflowManagementService:
         if not connector.connection_schema:
             raise ValidationError([f"Connector '{connector_id}' does not support connections"])
 
+        schema = connector.connection_schema
+        problems = credentials.validate_config(config, schema)
+        if problems:
+            raise ValidationError(problems)
+        stored = credentials.protect(credentials.merge_update(config, {}, schema), schema)
+
         with db_cursor() as cur:
             try:
-                connection_id = WorkflowRepository(cur).create_connection(connector_id, name, config)
+                connection_id = WorkflowRepository(cur).create_connection(connector_id, name, stored)
             except Exception as e:
                 if "unique" in str(e).lower():
                     raise DuplicateConnectionError(f"Connection name '{name}' already exists for connector '{connector_id}'")
@@ -204,7 +211,20 @@ class WorkflowManagementService:
             connection = WorkflowRepository(cur).get_connection(connection_id)
         if not connection:
             raise ConnectionNotFoundError("Connection not found")
-        return connection
+        public, secrets_set = credentials.redact(connection["config"] or {}, self._secret_schema(connection))
+        return {**connection, "config": public, "secrets_set": secrets_set}
+
+    def _connection_schema(self, connector_id: str) -> dict:
+        connector = self.connector_registry.get_connector(connector_id)
+        return connector.connection_schema if connector else {}
+
+    def _secret_schema(self, connection: dict) -> dict:
+        """The schema that says which stored fields are secret. If the connector is no longer registered nothing
+        says which fields are safe to show, so every field is treated as a secret."""
+        schema = self._connection_schema(connection["connector_id"])
+        if schema:
+            return schema
+        return {"properties": {key: {"writeOnly": True} for key in (connection["config"] or {})}}
 
     def update_connection(self, connection_id: str, name: str, config: dict) -> dict:
         with db_cursor() as cur:
@@ -212,8 +232,17 @@ class WorkflowManagementService:
             existing = repo.get_connection(connection_id)
             if not existing:
                 raise ConnectionNotFoundError("Connection not found")
+            if not self.connector_registry.get_connector(existing["connector_id"]):
+                raise ValidationError([
+                    f"Connector '{existing['connector_id']}' is no longer available, so this connection cannot be edited"])
+            schema = self._connection_schema(existing["connector_id"])
+            current = existing["config"] or {}
+            problems = credentials.validate_config(config, schema, keep=credentials.stored_secrets(current, schema))
+            if problems:
+                raise ValidationError(problems)
+            stored = credentials.protect(credentials.merge_update(config, current, schema), schema)
             try:
-                repo.update_connection(connection_id, name, config)
+                repo.update_connection(connection_id, name, stored)
             except Exception as e:
                 if "unique" in str(e).lower():
                     raise DuplicateConnectionError(f"Connection name '{name}' already exists for this connector")

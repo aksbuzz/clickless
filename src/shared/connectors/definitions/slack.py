@@ -8,7 +8,7 @@ slack_connector = Connector(
     connection_schema={
         "type": "object",
         "properties": {
-            "webhook_url": {"type": "string", "title": "Webhook URL", "description": "Slack Incoming Webhook URL"},
+            "webhook_url": {"type": "string", "title": "Webhook URL", "description": "Slack Incoming Webhook URL", "writeOnly": True},
         },
         "required": ["webhook_url"],
     },

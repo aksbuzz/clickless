@@ -21,6 +21,7 @@ psycopg2-binary = "*"
 structlog = "*"
 httpx = "*"
 prometheus-client = "*"
+cryptography = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
