@@ -36,6 +36,9 @@ CREATE TABLE workflow_instances (
   FOREIGN KEY (workflow_version_id) REFERENCES workflow_versions(id)
 );
 CREATE INDEX idx_instances_status ON workflow_instances (status);
+-- Retention (ADR 0022) finds finished runs by age; only they are indexed, so running work does not pay for it.
+CREATE INDEX idx_instances_finished ON workflow_instances (updated_at)
+  WHERE status IN ('completed', 'failed', 'cancelled');
 CREATE INDEX idx_instances_request_id ON workflow_instances (request_id);
 
 

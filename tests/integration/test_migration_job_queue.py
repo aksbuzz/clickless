@@ -59,9 +59,14 @@ def test_the_old_schema_really_is_the_old_one(databases):
     assert cur.fetchone() == {"has_outbox": True, "no_jobs": True}
 
 
-def test_migration_gives_the_same_schema_as_a_fresh_database(databases):
+LATER_MIGRATIONS = sorted(p for p in MIGRATION.parent.glob("*.sql") if p.name > MIGRATION.name)
+
+
+def test_migrations_give_the_same_schema_as_a_fresh_database(databases):
+    """The old schema plus migration 002 and every migration after it must equal what init.sql builds."""
     old, fresh = databases(OLD_SCHEMA), databases(NEW_SCHEMA)
-    old.cursor().execute(MIGRATION.read_text(encoding="utf-8"))
+    for migration in [MIGRATION, *LATER_MIGRATIONS]:
+        old.cursor().execute(migration.read_text(encoding="utf-8"))
     assert table_shapes(old) == table_shapes(fresh)
 
 

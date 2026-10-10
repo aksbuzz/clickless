@@ -50,6 +50,12 @@ workflow_errors_total = Counter(
     ['workflow_name', 'error_type']
 )
 
+# Housekeeping
+retention_deleted_total = Counter(
+    'retention_deleted_total',
+    'Finished workflow runs deleted after the retention period'
+)
+
 # API Metrics
 http_requests_total = Counter(
     'http_requests_total',
