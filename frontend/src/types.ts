@@ -38,7 +38,6 @@ export interface StepExecution {
   attempts: number;
   started_at: string;
   completed_at: string | null;
-  input_data: Record<string, unknown> | null;
   output_data: Record<string, unknown> | null;
   error_details: string | null;
 }

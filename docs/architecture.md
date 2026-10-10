@@ -2,74 +2,54 @@
 
 ## Overview
 
-This is a distributed workflow automation platform. Users define workflows as a DAG of steps; the system executes them reliably in response to external triggers (webhooks, manual API calls) or on a schedule.
+A workflow automation platform in the style of Zapier or n8n. Users define workflows as a graph of steps; the system runs them in response to webhooks, API calls or the UI, and records everything that happened.
 
-**Technology stack:**
+Four containers and nothing else:
 
-| Component | Technology |
-|---|---|
-| API server | FastAPI (Python) |
-| Message broker | RabbitMQ |
-| Task queue | Celery |
-| Database | PostgreSQL |
-| Distributed locks | Redis |
-| Frontend | React (TypeScript) |
+```mermaid
+flowchart LR
+    user([Browser]) --> web["frontend<br/>nginx + React"]
+    web -->|"/api (allow-listed)"| api["api<br/>FastAPI"]
+    ext(["GitHub, Slack, Trello,<br/>your own systems"]) -->|"webhooks, API calls"| api
+    api -->|"one transaction:<br/>instance + first job"| db[("PostgreSQL<br/>state + job queue")]
+    worker["worker<br/>claims jobs, runs steps"] <-->|"claim, save result,<br/>queue next job"| db
+    worker -->|"HTTP, SQL, ..."| out(["external services"])
+```
+
+| Component | Technology | Role |
+|---|---|---|
+| frontend | React, TypeScript, Vite, nginx | The UI. nginx serves it and proxies `/api` (the metrics, trigger and webhook paths are not proxied). |
+| api | FastAPI, gunicorn | Workflow and connection CRUD, starting, cancelling and resuming runs, webhook ingestion, authentication. |
+| worker | Python threads | Takes jobs from PostgreSQL and runs steps. Scale with `WORKER_CONCURRENCY` and `--scale worker=N`. |
+| postgres | PostgreSQL 17 | Workflow definitions, run state and history, credentials, and the job queue. |
+
+There is no message broker, cache or scheduler process. A job is a row; waiting, retrying and timing out are the same column (`run_at`). The reasoning is in [ADR 0017](adr/0017-postgres-backed-job-queue-replaces-outbox-broker-and-celery.md) and [ADR 0018](adr/0018-one-job-per-step-with-lease-fencing-and-single-transaction-advance.md).
 
 ---
 
-## High-Level Architecture
+## Core concepts
 
-```
-External Systems (GitHub, Slack, etc.)
-         │
-         ▼
- ┌──────────────┐
- │  FastAPI     │  ← REST API + webhook ingestion
- │  API Server  │
- └──────┬───────┘
-        │  writes atomically
-        ▼
- ┌──────────────┐
- │  PostgreSQL  │  ← workflow_instances + outbox table
- └──────┬───────┘
-        │  relay polls
-        ▼
- ┌──────────────┐
- │ Relay Service│  ← moves outbox rows → RabbitMQ
- └──────┬───────┘
-        │
-        ▼
- ┌──────────────┐
- │   RabbitMQ   │  ← orchestration_queue / actions_queue
- └──┬───────────┘
-    │
-    ├──► Engine Worker  (orchestration logic, state machine)
-    │
-    └──► Action Workers (execute connectors: GitHub, Slack, HTTP…)
-```
+### Workflow definition
 
----
-
-## Core Concepts
-
-### Workflow Definition
-
-A workflow is a versioned JSON document stored in `workflow_versions.definition`:
+A workflow is a versioned JSON document in `workflow_versions.definition`. Saving a new version deactivates the old one; instances stay pinned to the version they started on.
 
 ```json
 {
-  "trigger": {
-    "connector_id": "github",
-    "trigger_id": "github_issue_opened",
-    "config": {}
-  },
-  "start_at": "notify_slack",
+  "trigger": { "connector_id": "github", "trigger_id": "github_issue_opened", "config": { "repository": "acme/widgets" } },
+  "start_at": "check_labels",
   "steps": {
+    "check_labels": {
+      "type": "branch",
+      "condition": { "field": "issue.title", "operator": "contains", "value": "crash" },
+      "on_true": "notify_slack",
+      "on_false": "end"
+    },
     "notify_slack": {
+      "type": "action",
       "connector_id": "slack",
       "action_id": "slack_send_message",
-      "config": { "text": "New issue: {{issue.title}}" },
       "connection_id": "<connection-uuid>",
+      "config": { "text": "New issue: {{issue.title}}" },
       "retry": { "max_attempts": 3, "delay_seconds": 5 },
       "next": "end"
     }
@@ -77,131 +57,80 @@ A workflow is a versioned JSON document stored in `workflow_versions.definition`
 }
 ```
 
-Each step can be:
-- **action** – delegates to a connector handler (Slack, GitHub, HTTP, etc.)
-- **branch** – conditional routing based on instance data
-- **delay** – pauses execution for N seconds
-- **wait_for_event** – suspends until an external event arrives
-
-### Workflow Instance
-
-Each execution of a workflow is a `workflow_instance` row:
-
-```
-status: pending → running → completed
-                          → failed
-                          → cancelled
-```
-
-`instance.data` is a mutable JSONB blob that accumulates outputs from each step, available as template variables (e.g. `{{github_issue.number}}`).
-
----
-
-## Execution Flow
-
-### 1. Trigger Ingestion
-
-```
-POST /triggers/{connector_id}/webhook
-```
-
-1. Validate signature (HMAC for GitHub, signing secret for Slack).
-2. Parse raw webhook body into a normalized `TriggerEvent`.
-3. Query DB for all workflows whose trigger matches `(connector_id, trigger_id)`.
-4. For each matching workflow, in a **single DB transaction**:
-   - `INSERT workflow_instances` (status = `pending`, data = trigger payload)
-   - `INSERT outbox` (destination = `orchestration_queue`, payload = `START_WORKFLOW` event)
-
-Transactional coupling is the core reliability guarantee — the instance and the outbox message are either both saved or neither is.
-
-### 2. Relay (Outbox → RabbitMQ)
-
-The **Relay Service** runs continuously as a separate process:
-
-```python
-SELECT id, destination, payload
-FROM outbox
-WHERE processed_at IS NULL
-  AND publish_at <= NOW()
-LIMIT 100
-FOR UPDATE SKIP LOCKED
-```
-
-For each row it:
-1. Sends the message to the correct Celery task (`engine.orchestrate` or `worker.execute_action`).
-2. Sets `processed_at = NOW()` in the same transaction.
-
-`FOR UPDATE SKIP LOCKED` means multiple relay replicas can run safely in parallel — each row is claimed by exactly one relay instance.
-
-### 3. Orchestration Engine
-
-The engine worker consumes from `orchestration_queue` and runs a state machine:
-
-```
-Event: START_WORKFLOW
-  └─► _handle_workflow_start()
-        load instance → verify pending
-        transition to start_at step
-
-Event: STEP_COMPLETE
-  └─► _handle_step_completion()
-        verify step matches current step (stale-event guard)
-        mark step_execution COMPLETED
-        merge output_data into instance.data
-        transition to next step
-
-Event: STEP_FAILED
-  └─► _handle_step_failure()
-        attempts < max_attempts?
-          yes → schedule retry with delay
-          no  → mark instance FAILED
-```
-
-**Transition logic** (`_transition_to_step`):
-
-| Step type | Action |
+| Step type | What it does |
 |---|---|
-| `"end"` | Mark instance COMPLETED |
-| `delay` | Schedule `STEP_COMPLETE` event at `now + duration_seconds` |
-| `branch` | Evaluate condition, recurse into `on_true` / `on_false` |
-| `wait_for_event` | Suspend; optional timeout via scheduled `STEP_FAILED` |
-| action | Create `workflow_step_executions` row; enqueue to `actions_queue` |
+| `action` (default) | Calls a connector handler (Slack, GitHub, Trello, HTTP, PostgreSQL, webhook, transform, log). |
+| `branch` | Evaluates a condition on the instance data (`eq neq gt gte lt lte contains exists`, dot paths) and continues at `on_true` or `on_false`. |
+| `delay` | Waits `duration_seconds` (any step with `duration_seconds` is a delay). |
+| `wait_for_event` | Pauses until `POST /instances/{id}/events`, with an optional `timeout_seconds` after which the instance fails. |
 
-A **Redis lock** keyed on the instance ID serializes all events for the same instance, preventing race conditions when two events arrive simultaneously.
+`{{field.path}}` in a step's `config` is replaced with values from the instance data, once, by the engine, before the handler runs. A handler can name config keys that are never templated (the SQL handlers do, for `query` and `connection_string`).
 
-### 4. Action Workers
+### Instances, steps and jobs
 
-Action workers consume from `actions_queue`:
-
-1. **Idempotency check** — if the step is already `COMPLETED` in `workflow_step_executions`, skip and do nothing.
-2. Resolve connection credentials from `connections` table and merge into step config.
-3. Look up handler in the registry by `(connector_id, action_id)`.
-4. Call `handler.execute(instance_id, instance_data, config)`.
-5. Write result back to the outbox as `STEP_COMPLETE` or `STEP_FAILED`.
-
-Multiple worker replicas run in parallel (default 2), providing horizontal throughput.
+- A **workflow instance** is one run. Status: `pending` then `running` then `completed`, `failed` or `cancelled`. `data` is a JSON object that accumulates what each step changed.
+- A **step execution** is one attempt at one step: a row with status, the attempt number, the error text if it failed, and the data the step changed (`output_data`). A retried step has one row per attempt.
+- A **job** is the unit of work: "run step X of instance Y, no earlier than T". An instance has at most one live job, because workflows are sequential. Finished jobs are deleted; the table holds only work to do (`queued`, `running`) and jobs that gave up (`dead`).
 
 ---
 
-## Key Database Tables
+## How a run executes
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant A as api
+    participant D as PostgreSQL
+    participant W as worker thread
+    participant X as external service
+
+    C->>A: POST /workflows/{name}/run
+    A->>D: INSERT instance, INSERT job, NOTIFY (one transaction)
+    A-->>C: instance id
+    D-->>W: NOTIFY wakes an idle thread
+    W->>D: claim: take the next due job, set a lease
+    W->>D: begin: lock the instance, record the attempt, load the connection
+    W->>X: run the handler (no database transaction is open)
+    W->>D: finish, one transaction: check the lease, save the result, queue the next job
+    Note over W,D: branch, delay and end steps are resolved inside this same transaction
+    W->>D: claim the next job (no notification needed)
+```
+
+1. **Start.** The API inserts the instance and its first job in one transaction and notifies the workers. Webhook deliveries from GitHub, Slack and Trello are verified first, then start every matching workflow the same way.
+2. **Claim.** A worker thread runs `UPDATE jobs ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED LIMIT 1)`. The job becomes `running` with a lease (`locked_until`). Several workers can claim at once without coordination.
+3. **Begin.** In a short transaction the thread locks the instance row, closes any attempt a dead worker left open, records the new attempt, and loads the step's connection credentials.
+4. **Run.** The engine resolves `{{templates}}` and calls the handler. No database transaction or lock is held while it runs, so a slow HTTP call costs no connection.
+5. **Finish.** One transaction: it locks the instance and checks the job's lease is still this worker's. If so it stores the step's data, marks the attempt completed, deletes the job and works out what comes next. Branches are evaluated and delays added up right here; the first action or wait step becomes the next job. If the step failed, it either re-queues the same job after `retry.delay_seconds` or marks the job dead and the instance failed, with the error text.
+6. **Repeat.** The same thread claims again. No notification is needed for the job it just queued.
+
+Cancelling and resuming (`cancel`, `events`) take the same instance row lock, so they cannot interleave with a step finishing. A step that finishes after its instance was cancelled discards its result.
+
+---
+
+## Key database tables
 
 | Table | Purpose |
 |---|---|
 | `workflows` | Workflow identity (name, id) |
-| `workflow_versions` | Versioned definitions (JSONB) |
-| `workflow_instances` | Running/completed execution state |
-| `workflow_step_executions` | Per-step audit log + idempotency |
-| `outbox` | Transactional message relay buffer |
-| `connections` | Stored connector credentials |
+| `workflow_versions` | Versioned definitions (JSONB), one active per workflow |
+| `workflow_instances` | One row per run: status, current step, accumulated data, request id |
+| `workflow_step_executions` | One row per attempt: status, attempt number, data changed, error text |
+| `jobs` | The queue: step to run, `run_at`, lease (`locked_by`, `locked_until`), attempt and claim counts |
+| `connections` | Stored connector credentials (plaintext JSONB; see [ADR 0011](adr/0011-connection-credentials-stored-in-postgres.md)) |
+
+`infrastructure/postgres/init.sql` creates all of it, plus a seeded example workflow. Migrations for existing databases live in `infrastructure/postgres/migrations/`.
 
 ---
 
-## Services at a Glance
+## Services at a glance
 
-| Service | Entry Point | Role |
+| Service | Entry point | Command |
 |---|---|---|
-| `api` | `src/api/main.py` | HTTP server, trigger ingestion |
-| `engine` | `src/orchestration/entrypoint/celery_task.py` | Orchestration state machine |
-| `worker` | `src/worker/task.py` | Action execution |
-| `relay` | `src/relay/entrypoint/main.py` | Outbox → RabbitMQ relay |
-| `beat` | Celery Beat | Periodic tasks (recovery sweeper) |
+| api | `src/api/main.py` | `gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app` |
+| worker | `src/worker/main.py` | `python -m src.worker.main` |
+| frontend | `frontend/` | nginx serving the built app |
+| postgres | | `postgres:17-alpine` |
+
+Code layout: `src/api` (routers, service, repository, webhook trigger handlers, auth), `src/engine` (`runtime.py` the queue and state machine, `steps.py` pure logic, `worker.py` threads), `src/worker` (process entry point, connector handlers and their registry), `src/shared` (database pool, connector catalogue, outbound-request guard, errors, logging, metrics).
+
+Security controls (API key, webhook signatures, outbound-request guard, network exposure) are described in [ADR 0020](adr/0020-shared-api-key-authentication-and-private-internal-services.md) and [ADR 0021](adr/0021-guard-outbound-requests-from-workflow-handlers.md).

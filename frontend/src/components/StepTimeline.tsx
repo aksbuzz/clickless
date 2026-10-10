@@ -33,7 +33,7 @@ function StepItem({ step }: { step: StepExecution }) {
           <StatusBadge status={step.status} />
           {duration && <span className="text-xs text-gray-500">{duration}</span>}
           {step.attempts > 1 && (
-            <span className="text-xs text-orange-600">{step.attempts} attempts</span>
+            <span className="text-xs text-orange-600">attempt {step.attempts}</span>
           )}
           <button
             onClick={() => setExpanded(!expanded)}
@@ -53,17 +53,9 @@ function StepItem({ step }: { step: StepExecution }) {
               Started: {timeAgo(step.started_at)}
               {step.completed_at && <> &middot; Completed: {timeAgo(step.completed_at)}</>}
             </div>
-            {step.input_data && (
-              <details className="text-xs">
-                <summary className="cursor-pointer text-gray-600">Input Data</summary>
-                <pre className="mt-1 p-2 bg-gray-50 rounded overflow-auto max-h-40">
-                  {JSON.stringify(step.input_data, null, 2)}
-                </pre>
-              </details>
-            )}
             {step.output_data && (
               <details className="text-xs">
-                <summary className="cursor-pointer text-gray-600">Output Data</summary>
+                <summary className="cursor-pointer text-gray-600">Data this step changed</summary>
                 <pre className="mt-1 p-2 bg-gray-50 rounded overflow-auto max-h-40">
                   {JSON.stringify(step.output_data, null, 2)}
                 </pre>

@@ -1,3 +1,5 @@
+# Development additions, loaded automatically by `docker compose up`. CI and production-style runs
+# use only docker-compose.yml (`docker compose -f docker-compose.yml up`).
 services:
   api:
     command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
@@ -6,27 +8,17 @@ services:
     environment:
       LOG_LEVEL: debug
 
-  engine:
-    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q orchestration_queue -n engine@%h
-    volumes:
-      - ./src:/app/src
-
+  # The worker does not reload by itself: after editing code, run `docker compose restart worker`.
   worker:
-    command: celery -A src.shared.celery_app.app worker --loglevel=debug -Q actions_queue -n worker@%h
-    volumes:
-      - ./src:/app/src
-    deploy:
-      replicas: 1
-
-  relay:
-    command: python src/relay/entrypoint/main.py
     volumes:
       - ./src:/app/src
 
+  # Database browser, off by default: docker compose --profile dev-tools up
   adminer:
     image: adminer:latest
-    restart: always
+    profiles: ["dev-tools"]
+    restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     networks:
       - app-network

@@ -13,7 +13,7 @@ A tool to automate your business tasks. This app helps you create **workflows**.
 - **Connect apps** - Link with GitHub, Slack, databases
 - **Run automatically** - Start workflows with events
 - **See progress** - Track what is happening
-- **Visual builder** - Easy drag and drop interface
+- **Visual builder** - A step-by-step form wizard with a live graph preview
 
 ---
 
@@ -21,9 +21,8 @@ A tool to automate your business tasks. This app helps you create **workflows**.
 
 ### What you need:
 
-- **Docker** and **Docker Compose**
-- **Python 3.12** or newer
-- **Poetry** (Python package manager)
+- **Docker** and **Docker Compose** (that is all you need to run the app)
+- To run the tests or work on the code: **Python 3.12**, **Poetry**, and **Node 22.18** or newer for the frontend
 
 ### Step 1: Download the code
 
@@ -34,20 +33,20 @@ cd workflow_automate
 
 ### Step 2: Setup environment
 
-Copy the example file:
+Generate your settings. This creates `.env` with random passwords and an API key, and prints the key:
 
 ```bash
-cp .env.example .env
+sh scripts/init-env.sh
 ```
 
-Open `.env` file and add your settings.
+Do not copy `.env.example` by hand: Docker Compose and the API refuse to start without these secrets.
 
 ### Step 3: Start the app
 
 Run this command:
 
 ```bash
-docker-compose up --build -d
+docker compose up --build -d
 ```
 
 Wait 1-2 minutes. Docker will download and start everything.
@@ -60,8 +59,20 @@ Wait 1-2 minutes. Docker will download and start everything.
 
 After starting, open your web browser:
 
-- **Frontend (Website)**: http://localhost:3000
-- **API (Backend)**: http://localhost:8000
+- **Frontend (Website)**: http://localhost:3000. It asks for the API key printed in step 2 (also in `.env` as `API_KEY`).
+- **API (Backend)**: http://localhost:8000. Every request needs the header `Authorization: Bearer <API_KEY>`.
+
+Both listen on this machine only. Set `BIND_ADDRESS=0.0.0.0` in `.env` to expose them, and only do that behind something that provides TLS and access control.
+
+### Security settings
+
+| Setting (in `.env`) | What it does |
+|---|---|
+| `API_KEY` | The shared key for the API and UI. At least 16 characters; the API will not start without it. |
+| `GITHUB_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`, `TRELLO_API_SECRET` + `TRELLO_CALLBACK_URL` | Secrets used to verify webhooks from each provider. A provider's webhook is **rejected while its secret is empty**. Point providers at `http://<your-host>:8000/triggers/<github\|slack\|trello>/webhook`. |
+| `OUTBOUND_ALLOW_HOSTS` | Workflows may only call public addresses. List internal hosts (comma-separated) that they may also call, for example a private database. |
+
+PostgreSQL is not published to the host. For a local database browser run `docker compose --profile dev-tools up` (adminer on http://127.0.0.1:8080).
 
 ### Create a workflow
 
@@ -76,14 +87,16 @@ After starting, open your web browser:
 
 ## What's Inside?
 
+Four containers:
+
 | Part | What it does |
 |------|--------------|
-| **Frontend** | Website you see and click |
-| **API** | Receives your requests |
-| **Engine** | Controls the workflows |
-| **Worker** | Does the actual tasks |
-| **Database** | Saves all data |
-| **Message Queue** | Sends messages between parts |
+| **frontend** | The website (React, served by nginx). It also proxies `/api` to the API. |
+| **api** | Receives requests and webhooks, stores workflows, starts and cancels runs. |
+| **worker** | Runs the steps. It takes jobs from the database, one step per job, and can run many at once. |
+| **postgres** | Everything else: workflows, run state, history, and the job queue itself. |
+
+There is no message broker, cache or separate scheduler. See [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -93,24 +106,24 @@ After starting, open your web browser:
 
 See all logs:
 ```bash
-docker-compose logs -f
+docker compose logs -f
 ```
 
 See logs for one part only:
 ```bash
-docker-compose logs -f worker
+docker compose logs -f worker
 ```
 
 ### Stop the app
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### Stop and delete everything
 
 ```bash
-docker-compose down -v
+docker compose down -v
 ```
 
 **Warning**: This deletes your database!
@@ -118,8 +131,26 @@ docker-compose down -v
 ### Restart the app
 
 ```bash
-docker-compose restart
+docker compose restart
 ```
+
+### Run more workers
+
+Each worker runs up to `WORKER_CONCURRENCY` steps at once (default 8). For more capacity, raise that or add workers:
+
+```bash
+docker compose up -d --scale worker=3
+```
+
+### Check on it
+
+- `GET /health` (needs the API key) reports PostgreSQL and the job queue. It goes unhealthy when due jobs are not being picked up, which means no worker is running.
+- `GET /ready` (public) is the container readiness probe.
+- Metrics: `GET /metrics` on the API, and the worker serves its own on port 9100 inside the compose network (workflow and step counts, durations, retries, failures).
+- Jobs that could not be run (a step that kept killing its worker) stay in the `jobs` table with status `dead`:
+  ```sql
+  SELECT id, instance_id, step_name, last_error FROM jobs WHERE status = 'dead';
+  ```
 
 ---
 
@@ -127,12 +158,10 @@ docker-compose restart
 
 - **Python** - Programming language
 - **FastAPI** - Web framework
-- **PostgreSQL** - Database
-- **RabbitMQ** - Message system
-- **Redis** - Fast cache
-- **React** - Website framework
+- **PostgreSQL** - Database and job queue
+- **React** and **TypeScript** - Website
+- **nginx** - Serves the website and proxies the API
 - **Docker** - Container system
-- **Celery** - Task queue
 
 ---
 
@@ -140,16 +169,22 @@ docker-compose restart
 
 ```
 workflow_automate/
-├── frontend/          # Website code (React)
+├── frontend/             # Website code (React)
 ├── src/
-│   ├── api/          # API endpoints
-│   ├── engine/       # Workflow controller
-│   ├── worker/       # Task executor
-│   ├── relay/        # Message sender
-│   └── shared/       # Common code
-├── infrastructure/    # Database setup
-├── docker-compose.yml # Docker configuration
-└── .env              # Your settings
+│   ├── api/              # HTTP API, webhook ingestion, authentication
+│   ├── engine/           # Job queue and workflow state machine, worker threads
+│   ├── worker/           # Worker process entry point and the connector handlers
+│   └── shared/           # Database access, connector catalogue, outbound guard, logging, metrics
+├── infrastructure/
+│   └── postgres/         # init.sql (schema and seed) and migrations for existing databases
+├── tests/
+│   ├── unit/             # No database needed
+│   └── integration/      # Run against a real PostgreSQL
+├── benchmarks/           # Throughput benchmarks for the worker and the API
+├── scripts/              # init-env.sh (secrets) and smoke.sh (end-to-end check)
+├── docs/                 # Architecture, reliability, scalability, decision records
+├── docker-compose.yml    # The four services
+└── .env                  # Your settings (created by scripts/init-env.sh)
 ```
 
 ---
@@ -178,24 +213,12 @@ workflow_automate/
 ```json
 {
   "description": "Classify order priority by quantity and set shipping days.",
-  "start_at": "compute_priority",
+  "trigger": { "connector_id": "http", "trigger_id": "http_request_received", "config": {} },
+  "start_at": "check_quantity",
   "steps": {
-    "compute_priority": {
-      "type": "action",
-      "connector_id": "python",
-      "action_id": "python_execute",
-      "config": {
-        "code": "qty = data.get('order', {}).get('quantity', 0)\ndata['priority'] = 'high' if qty >= 100 else 'normal'"
-      },
-      "next": "check_priority"
-    },
-    "check_priority": {
+    "check_quantity": {
       "type": "branch",
-      "condition": {
-        "field": "priority",
-        "operator": "eq",
-        "value": "high"
-      },
+      "condition": { "field": "order.quantity", "operator": "gte", "value": 100 },
       "on_true": "set_expedited",
       "on_false": "set_standard"
     },
@@ -203,14 +226,14 @@ workflow_automate/
       "type": "action",
       "connector_id": "internal",
       "action_id": "transform_data",
-      "config": { "set": { "expedited": true, "shipping_days": 1 } },
+      "config": { "set": { "priority": "high", "expedited": true, "shipping_days": 1 } },
       "next": "log_result"
     },
     "set_standard": {
       "type": "action",
       "connector_id": "internal",
       "action_id": "transform_data",
-      "config": { "set": { "expedited": false, "shipping_days": 5 } },
+      "config": { "set": { "priority": "normal", "expedited": false, "shipping_days": 5 } },
       "next": "log_result"
     },
     "log_result": {
@@ -224,39 +247,60 @@ workflow_automate/
 }
 ```
 
-
 ### Run tests
 
+Backend tests (Python 3.12, dependencies from `poetry.lock`). The integration tests need a PostgreSQL where they may create databases; without `TEST_DATABASE_URL` they are skipped (and fail in CI):
+
 ```bash
-pytest
+poetry install --no-root
+docker run -d --name pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:17-alpine
+export TEST_DATABASE_URL=postgresql://postgres@localhost:5432/postgres
+make test        # or: python -m pytest -q tests
 ```
+
+Frontend lint, tests and build:
+
+```bash
+cd frontend && npm ci && npm run lint && npm test && npm run build
+```
+
+End-to-end smoke test. It runs the seeded workflow down both branches against a running stack and checks the security setup:
+
+```bash
+sh scripts/init-env.sh
+docker compose up --build -d
+make smoke       # or: sh scripts/smoke.sh
+```
+
+CI (`.github/workflows/ci.yml`) runs all three.
 
 ### Add a new connector
 
-1. Go to `src/shared/connectors/definitions/`
-2. Create a new file (example: `myapp.py`)
-3. Define your connector
-4. Register it
+1. Describe it in `src/shared/connectors/definitions/myapp.py` (triggers, actions and their config fields, which the UI uses to build forms) and import it in `definitions/__init__.py`.
+2. Implement each action in `src/worker/handlers/myapp.py` with the `@action("action_id")` decorator and import the module in `src/worker/registry.py`. A handler receives its config with `{{templates}}` already resolved by the engine; it must not resolve them again. A handler that takes SQL or a connection string lists those keys in `untemplated_keys` so they are never built from data.
+3. Anything that connects out on a user's behalf (URLs, hosts) must go through `src/shared/net_guard.py`.
+4. A webhook trigger also needs a handler in `src/api/trigger_handlers/` that verifies the provider's signature.
 
 ### Database changes
 
-Edit this file:
-```
-infrastructure/postgres/init.sql
+`infrastructure/postgres/init.sql` creates the schema when the database is first created. To change the schema of an existing database, add a numbered SQL file to `infrastructure/postgres/migrations/` (and make `init.sql` produce the same result; `tests/integration/test_migration_job_queue.py` shows how to test that). Apply a migration with:
+
+```bash
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < infrastructure/postgres/migrations/002_job_queue.sql
 ```
 
-Then restart:
-```bash
-docker-compose down -v
-docker-compose up --build -d
-```
+Upgrading from the version that used RabbitMQ, Redis and Celery: stop the stack, apply migration `002_job_queue.sql` (it turns unfinished instances into jobs so they resume), then start the new stack. Remove the old `RABBITMQ_*` and `REDIS_*` settings from `.env`.
 
 ---
 
-## Future Plans
+## Documentation
 
-- [ ] Add more connectors
-- [ ] UX improvements
+- [docs/architecture.md](docs/architecture.md): how a workflow runs, end to end
+- [docs/reliability.md](docs/reliability.md): what is guaranteed and how failures are handled
+- [docs/scalability.md](docs/scalability.md): measured throughput, sizing for small servers, tuning
+- [docs/worker-and-scheduler.md](docs/worker-and-scheduler.md): how workers pick up, delay and retry steps
+- [docs/adr/](docs/adr/README.md): decision records
+- [docs/audit-2026-10-07.md](docs/audit-2026-10-07.md): review findings and what is still open
 
 ---
 

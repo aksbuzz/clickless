@@ -58,36 +58,8 @@ class WorkflowRepository(BaseRepository):
             (workflow_id,)
         )
 
-    def create_instance(self, version_id: str, status: str, data: dict, request_id: str = None) -> str:
-        return self.execute_returning(
-            "INSERT INTO workflow_instances (workflow_version_id, status, data, request_id) "
-            "VALUES (%s, %s, %s, %s) RETURNING id;",
-            (version_id, status, json.dumps(data), request_id)
-        )
-
     def get_instance(self, instance_id: str) -> Optional[dict]:
         return self.fetch_one("SELECT * FROM workflow_instances WHERE id = %s;", (instance_id,))
-
-    def get_instance_with_definition(self, instance_id: str) -> Optional[dict]:
-        return self.fetch_one(
-            "SELECT i.status, i.current_step, v.definition "
-            "FROM workflow_instances i "
-            "JOIN workflow_versions v ON i.workflow_version_id = v.id "
-            "WHERE i.id = %s;",
-            (instance_id,)
-        )
-
-    def update_instance_status(self, instance_id: str, status: str) -> None:
-        self.execute(
-            "UPDATE workflow_instances SET status = %s WHERE id = %s;",
-            (status, instance_id)
-        )
-
-    def schedule_outbox_message(self, destination: str, payload: dict) -> None:
-        self.execute(
-            "INSERT INTO outbox (destination, payload) VALUES (%s, %s);",
-            (destination, json.dumps(payload))
-        )
 
     def list_instances(self, status: str = None, workflow_id: str = None, limit: int = 50, offset: int = 0) -> list:
         query = (
@@ -113,33 +85,11 @@ class WorkflowRepository(BaseRepository):
     def list_step_executions(self, instance_id: str) -> list:
         return self.fetch_all(
             "SELECT id, step_name, status, attempts, started_at, completed_at, "
-            "input_data, output_data, error_details "
+            "output_data, error_details "
             "FROM workflow_step_executions "
             "WHERE instance_id = %s "
             "ORDER BY started_at ASC;",
             (instance_id,)
-        )
-
-    def find_stuck_instances(self, stale_seconds: int = 60) -> list:
-        return self.fetch_all(
-            "SELECT i.id, i.status, i.current_step, i.data, "
-            "v.definition, w.name AS workflow_name "
-            "FROM workflow_instances i "
-            "JOIN workflow_versions v ON i.workflow_version_id = v.id "
-            "JOIN workflows w ON v.workflow_id = w.id "
-            "WHERE i.status IN ('pending', 'running') "
-            "AND i.updated_at < NOW() - INTERVAL '%s seconds' "
-            "ORDER BY i.created_at ASC",
-            (stale_seconds,)
-        )
-
-    def find_latest_step_execution(self, instance_id: str, step_name: str) -> Optional[dict]:
-        return self.fetch_one(
-            "SELECT id, step_name, status, output_data "
-            "FROM workflow_step_executions "
-            "WHERE instance_id = %s AND step_name = %s "
-            "ORDER BY started_at DESC LIMIT 1;",
-            (instance_id, step_name)
         )
 
     def create_connection(self, connector_id: str, name: str, config: dict) -> str:

@@ -1,238 +1,70 @@
 # Worker and Scheduler
 
-## Worker
+## There is no separate scheduler
 
-### What the Worker Does
+The worker takes jobs from PostgreSQL, and a job's `run_at` says when it may run. Starting a run, retrying a failed step, waiting out a `delay`, and timing out a `wait_for_event` are all just jobs with a `run_at`. A job with `run_at` in the future is simply not claimable until then.
 
-The action worker executes individual workflow steps. It is a Celery consumer of the `actions_queue`. It is completely stateless — all state lives in PostgreSQL — so any number of replicas can run in parallel.
+## The worker process
 
-**Entry point:** `src/worker/task.py`
-**Business logic:** `src/worker/service.py`
-
-### Execution Sequence
+Entry point `src/worker/main.py`, logic in `src/engine/worker.py`.
 
 ```
-RabbitMQ: actions_queue
-  │
-  ▼
-execute_action(message)          ← Celery task
-  │
-  ├─ Idempotency check           ← query workflow_step_executions
-  │   (step already COMPLETED?)
-  │
-  ├─ Load instance.data from DB
-  │
-  ├─ Merge connection credentials
-  │   (connections table → config override)
-  │
-  ├─ Registry lookup
-  │   handler = registry.get(connector_id, action_id)
-  │
-  ├─ handler.execute(instance_id, data, config)
-  │   returns ActionResult(status, updated_data, error_message)
-  │
-  └─ Write outbox row
-      STEP_COMPLETE → orchestration_queue
-      STEP_FAILED   → orchestration_queue
+worker process
+├── dispatcher thread      holds the one LISTEN connection; wakes runners
+├── step-runner thread x N  each: claim -> begin -> run handler -> finish -> repeat
+└── metrics server          Prometheus on port 9100
 ```
 
-### Handler Registry
+- **Runner threads** (`WORKER_CONCURRENCY`, default 8) share a small connection pool. A thread needs a database connection only for the three short transactions of a step, never while the handler runs, so many threads can wait on slow external calls at once. If every connection is busy, a thread waits for one (up to 30 s).
+- **The dispatcher** keeps a single `LISTEN` connection for the whole process. Each time it wakes it asks the database how long until the next job is due or the next lease expires, and sleeps until then (at most 1 s, so it notices a shutdown request). When a job is due it wakes one idle runner.
+- **`WakeSignal`** hands out wake-ups so none is lost between "nothing to do" and "going to sleep". A runner that finishes a job wakes one more, so a burst of jobs spreads across idle threads without every thread polling.
+- Every wake-up is only a hint. The truth is the claim query: if nothing is due it returns nothing and the thread sleeps again.
 
-Handlers are registered with the `@action` decorator:
+### Why not poll, and why not `NOTIFY` for everything
+
+Polling alone adds latency equal to the poll interval to every job. `NOTIFY` alone cannot express "wake me in 30 seconds", and it has a cost: PostgreSQL takes a global lock for every commit that issued `NOTIFY` and holds it through the disk sync, so a `NOTIFY` per step capped the whole system near 80 steps per second (found by benchmarking; see [scalability.md](scalability.md)). The worker therefore combines both:
+
+| Event | Notifies? | Why |
+|---|---|---|
+| API starts a workflow | yes | Idle workers must start it now. |
+| `POST /instances/{id}/events` resumes a waiting step | yes | Same. |
+| A step finishes and the next job is due immediately | **no** | The same thread claims it on its next loop. |
+| A job is queued for later (delay, retry back-off, wait timeout) | yes | A sleeping dispatcher may need an earlier deadline. |
+| Nothing happens | no | A safety wake every `WORKER_IDLE_POLL_SECONDS` (default 5) covers a missed notification. |
+
+A job due in 30 seconds is claimed within about 50 ms of becoming due, without any polling in between. `LISTEN` needs a direct or session-pooled connection, so keep PgBouncer in transaction mode away from it.
+
+## Time-based behaviour
+
+- **Delay.** `delay` steps are resolved while finishing the previous step: the duration is added to the next job's `run_at`. No job exists for the delay itself, and nothing runs or holds a lease while an instance waits.
+- **Retry.** A failed attempt with attempts left updates the same job: `run_at = now + retry.delay_seconds`, claim count reset.
+- **Wait timeout.** Arming a `wait_for_event` step queues a `wait_timeout` job for `timeout_seconds` later. Resuming the instance deletes it. If it fires while the instance is still waiting, the instance fails.
+- **Lease expiry.** A running job whose `locked_until` has passed is claimable again; that is how work from a crashed worker returns to the queue.
+
+## Shutdown
+
+`SIGTERM` or `SIGINT` sets a stop flag. Runner threads finish the step they are in, then exit; the dispatcher stops on its next tick; the pool is closed. `docker compose` waits 45 s (`stop_grace_period`). A step still running at that point is recovered by lease expiry.
+
+## Connector handlers
+
+A handler is a class registered with `@action("action_id")` (`src/worker/registry.py`); the engine finds it by the step's `action_id`.
 
 ```python
-# src/worker/registry.py
-@action("slack_send_message")
-class SlackSendMessageHandler:
+@action("my_action")
+class MyHandler:
+    untemplated_keys = ()          # config keys the engine must NOT resolve {{templates}} in
+
     def execute(self, instance_id, data, config=None, **kwargs) -> ActionResult:
         ...
+        return ActionResult(ActionStatus.SUCCESS, data)       # or FAILURE with error_message
 ```
 
-The registry maps `action_id` → handler instance. Handlers are imported at startup; adding a new connector means creating a new handler file and registering it.
+- `config` arrives with `{{templates}}` already resolved, and with the step's stored connection merged in (the step's own keys win). Do not resolve templates again.
+- `data` is a copy of the instance data. Return the full dict you want the instance to have; the engine stores only what changed, and removes keys you removed.
+- Handlers run concurrently on different threads and must be stateless. They do not touch the database; the engine does that around them.
+- Anything that connects out for the workflow author must pass through `src/shared/net_guard.py`.
+- Raise or return a failure for any problem; the engine records the message and applies the step's retry policy.
 
-### Celery Configuration
+## Metrics
 
-```python
-task_ack_late = True              # ACK only after task completes
-worker_prefetch_multiplier = 1    # One task at a time per worker thread
-task_reject_on_worker_lost = True # Re-queue if worker dies mid-task
-task_soft_time_limit = 300        # SIGTERM after 5 min (graceful)
-task_time_limit = 360             # SIGKILL after 6 min (hard)
-```
-
-`task_ack_late = True` is the most important setting for reliability: the message is not removed from RabbitMQ until after the task function returns. If the worker crashes during execution, RabbitMQ re-delivers the message to another worker. Combined with the idempotency check, this gives at-least-once execution without double-execution side effects.
-
-### Dead Letter Queues
-
-Both `actions_queue` and `orchestration_queue` have a corresponding DLQ (`actions_dlq`, `orchestration_dlq`). Messages that exhaust Celery retries land in the DLQ for manual inspection.
-
----
-
-## Scheduler (Relay Service)
-
-### What "Scheduler" Means Here
-
-There is no dedicated scheduler process in the traditional sense. Scheduled execution — both immediate dispatch and future/delayed steps — is implemented via the **Transactional Outbox pattern** combined with a polling **Relay Service**.
-
-### Outbox Table
-
-Every time the system needs to send a message (start a workflow, dispatch an action, schedule a retry, resume after a delay), it inserts a row into the `outbox` table **inside the same database transaction** as the state change:
-
-```sql
--- Example: schedule a step to run 5 minutes from now
-INSERT INTO outbox (destination, payload, publish_at)
-VALUES ('orchestration_queue',
-        '{"type": "STEP_COMPLETE", "instance_id": "..."}',
-        NOW() + INTERVAL '300 seconds');
-```
-
-The `publish_at` column is how delayed execution works. A row with `publish_at` in the future is ignored by the relay until that time arrives.
-
-### Relay Service — Current Implementation
-
-**File:** `src/relay/service.py`
-
-The relay runs in a tight loop (or with a short sleep between iterations):
-
-```python
-def relay_messages(self) -> int:
-    rows = db.execute("""
-        SELECT id, destination, payload
-        FROM outbox
-        WHERE processed_at IS NULL
-          AND publish_at <= NOW()
-        ORDER BY publish_at ASC
-        LIMIT 100
-        FOR UPDATE SKIP LOCKED
-    """)
-
-    for row in rows:
-        task_name = TASK_ROUTING[row.destination]
-        celery_app.send_task(task_name, kwargs=row.payload, ...)
-
-    db.execute("UPDATE outbox SET processed_at = NOW() WHERE id = ANY(...)")
-    return len(rows)
-```
-
-**Key properties:**
-- `FOR UPDATE SKIP LOCKED` — rows locked by one relay replica are skipped by others, allowing safe horizontal scaling.
-- Batch size of 100 — limits per-poll DB pressure.
-- `publish_at <= NOW()` — the built-in delay mechanism; no separate scheduler needed for timed steps.
-
-### How the Relay Discovers Jobs to Execute
-
-**It polls.** Every iteration it queries PostgreSQL for unprocessed outbox rows due for delivery.
-
----
-
-## Polling: Downsides and Alternatives
-
-### Current Approach: Database Polling
-
-```
-Relay Service
-  └─ every N ms: SELECT from outbox WHERE publish_at <= NOW()
-```
-
-**Pros:**
-- Simple — one moving part.
-- Transactional — the outbox row and the state change are atomic.
-- Persistent — survives relay restarts without losing messages.
-- No external dependency beyond PostgreSQL.
-
-**Cons:**
-
-| Problem | Detail |
-|---|---|
-| **Latency floor** | Minimum delivery latency ≈ poll interval. With 100ms polling, average latency is ~50ms; at 1s polling it's ~500ms. |
-| **DB read pressure** | Every poll is a SELECT + UPDATE on the `outbox` table. At high message rates this adds significant read/write load. |
-| **Thundering herd** | Multiple relay replicas all polling simultaneously can spike DB CPU even when the queue is empty. |
-| **Tight loop risk** | If the relay loop has no sleep and the queue is always empty, it hammers the DB continuously. |
-| **Coarse granularity** | Delays shorter than the poll interval (e.g. 1-second retries with 2-second polling) are rounded up. |
-
-### Alternative Approaches
-
-#### 1. Listen/Notify (PostgreSQL LISTEN/NOTIFY)
-
-PostgreSQL has a built-in pub/sub mechanism. When a row is inserted into the outbox, a trigger fires `NOTIFY outbox_ready`. The relay holds an open connection and wakes up immediately on the notification.
-
-```sql
--- Trigger fires on every INSERT into outbox
-CREATE OR REPLACE FUNCTION notify_outbox_insert()
-RETURNS trigger AS $$
-BEGIN
-  PERFORM pg_notify('outbox_ready', NEW.id::text);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_outbox_notify
-AFTER INSERT ON outbox
-FOR EACH ROW EXECUTE FUNCTION notify_outbox_insert();
-```
-
-```python
-# Relay listens
-conn.execute("LISTEN outbox_ready")
-conn.poll()  # blocks until notification arrives
-```
-
-**Pros:** Near-zero latency for immediate messages; no unnecessary DB reads when idle.
-**Cons:** Still need a fallback polling loop for delayed messages (`publish_at` in the future). NOTIFY does not carry the message content — the relay must still query for it.
-
-**Best practice:** Use LISTEN/NOTIFY as a wake-up signal, fall back to polling every 5–10s for delayed messages and missed notifications.
-
-#### 2. Dedicated Scheduling Service (e.g. pg_cron, APScheduler, Temporal)
-
-Replace the outbox entirely with a purpose-built scheduler:
-
-- **pg_cron** — PostgreSQL extension for cron-like jobs inside the DB.
-- **APScheduler / Rocketry** — Python-native scheduler with persistent job stores.
-- **Temporal / Conductor** — full workflow orchestration platforms with native scheduling.
-
-These eliminate the relay entirely but introduce a new service dependency and operational complexity.
-
-#### 3. Message Broker Native Delays
-
-RabbitMQ supports **delayed message plugin** or **TTL + dead-letter routing**, which allow publishing a message with a delay natively in the broker. This removes the need for `outbox.publish_at` and the relay:
-
-```python
-# Publish with 5-second delay (requires rabbitmq_delayed_message_exchange plugin)
-channel.basic_publish(
-    exchange='delayed_exchange',
-    routing_key='orchestration',
-    body=payload,
-    properties=pika.BasicProperties(
-        headers={'x-delay': 5000}  # milliseconds
-    )
-)
-```
-
-**Pros:** True broker-side delays, no polling at all.
-**Cons:** Loses the transactional guarantee — a crash between writing the instance and publishing the message can result in a lost job. Requires RabbitMQ plugin installation.
-
-#### 4. Redis Sorted Sets (ZSet-based Scheduler)
-
-Store jobs in a Redis sorted set keyed by their scheduled time (Unix timestamp as the score). A scheduler thread pops jobs whose score ≤ `NOW()`:
-
-```python
-# Schedule a job
-redis.zadd("scheduled_jobs", {job_id: scheduled_timestamp})
-
-# Poll
-jobs = redis.zrangebyscore("scheduled_jobs", 0, time.time(), start=0, num=100)
-```
-
-**Pros:** Sub-millisecond poll latency, extremely fast for high-throughput scheduling.
-**Cons:** Redis is not transactional with PostgreSQL — losing a Redis job means lost execution. Requires a separate durability strategy (Redis AOF + snapshots, or mirroring back to Postgres).
-
-### Recommendation
-
-The current outbox-polling approach is correct and sufficient for most loads. To improve it:
-
-1. **Add LISTEN/NOTIFY** for immediate messages — reduces average latency from `poll_interval / 2` to near-zero without sacrificing durability.
-2. **Keep polling as fallback** every 5–10 seconds for delayed messages and to catch any missed notifications.
-3. **Tune poll interval** — for sub-second job latency targets, run the relay with a 50–100ms sleep between iterations.
-4. **Scale relay horizontally** — `FOR UPDATE SKIP LOCKED` already makes this safe; run 2–4 replicas for throughput.
-
-See [scalability.md](scalability.md) for throughput and latency targets.
+The worker serves Prometheus metrics on `WORKER_METRICS_PORT` (default 9100, inside the compose network): `workflow_started_total`, `workflow_completed_total`, `workflow_duration_seconds`, `workflow_errors_total`, `step_execution_total`, `step_duration_seconds`, `step_retry_total`. The API serves its own HTTP metrics at `/metrics`.

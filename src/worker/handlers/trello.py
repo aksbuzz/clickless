@@ -1,6 +1,5 @@
 import httpx
 
-from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
 from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
@@ -11,7 +10,7 @@ TRELLO_API_BASE = "https://api.trello.com/1"
 @action("trello_create_card")
 class TrelloCreateCardHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         api_key = config.get("api_key", "")
         api_token = config.get("api_token", "")
         list_id = config.get("list_id", "")
@@ -44,7 +43,7 @@ class TrelloCreateCardHandler:
 @action("trello_add_comment")
 class TrelloAddCommentHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         api_key = config.get("api_key", "")
         api_token = config.get("api_token", "")
         card_id = config.get("card_id", "")

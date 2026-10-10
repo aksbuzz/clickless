@@ -29,12 +29,14 @@ CREATE TABLE workflow_instances (
   current_step VARCHAR(100),
   current_step_attempts INTEGER DEFAULT 0,
   data JSONB,
+  request_id VARCHAR(36),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
   FOREIGN KEY (workflow_version_id) REFERENCES workflow_versions(id)
 );
 CREATE INDEX idx_instances_status ON workflow_instances (status);
+CREATE INDEX idx_instances_request_id ON workflow_instances (request_id);
 
 
 CREATE TABLE workflow_step_executions (
@@ -45,25 +47,38 @@ CREATE TABLE workflow_step_executions (
   attempts INTEGER DEFAULT 1,
   started_at TIMESTAMP WITH TIME ZONE NOT NULL,
   completed_at TIMESTAMP WITH TIME ZONE,
-  input_data JSONB,
   output_data JSONB,
   error_details TEXT,
+  request_id VARCHAR(36),
   
   FOREIGN KEY (instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_step_exec_instance ON workflow_step_executions (instance_id);
 CREATE INDEX idx_step_exec_status ON workflow_step_executions (status);
+CREATE INDEX idx_step_exec_request_id ON workflow_step_executions (request_id);
 
 
-CREATE TABLE outbox (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  destination VARCHAR(255) NOT NULL,
-  payload JSONB NOT NULL,
-  publish_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  processed_at TIMESTAMP WITH TIME ZONE NULL
+-- The work queue. One job runs one step of one instance; see docs/adr/0017 and 0018.
+CREATE TABLE jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  instance_id   UUID NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  step_name     VARCHAR(100) NOT NULL,
+  kind          VARCHAR(20)  NOT NULL DEFAULT 'run_step' CHECK (kind IN ('run_step', 'wait_timeout')),
+  status        VARCHAR(20)  NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued', 'running', 'dead')),   -- finished jobs are deleted
+  run_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),   -- delays, retry back-off and wait timeouts all use this
+  attempts      INTEGER NOT NULL DEFAULT 0,            -- failures reported by the handler, compared with the step retry policy
+  claims        INTEGER NOT NULL DEFAULT 0,            -- times a worker took the job (guards against a step that kills workers)
+  locked_by     TEXT,
+  locked_until  TIMESTAMPTZ,                           -- the lease: once it has expired another worker may take the job
+  last_error    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at   TIMESTAMPTZ                            -- set when a job is marked dead
 );
-CREATE INDEX idx_outbox_unprocessed ON outbox (processed_at) WHERE processed_at IS NULL;
+CREATE INDEX idx_jobs_queued   ON jobs (run_at)       WHERE status = 'queued';
+CREATE INDEX idx_jobs_running  ON jobs (locked_until) WHERE status = 'running';
+CREATE INDEX idx_jobs_instance ON jobs (instance_id);
+CREATE INDEX idx_jobs_dead     ON jobs (id)           WHERE status = 'dead';
 
 CREATE INDEX idx_versions_trigger ON workflow_versions (
   (definition->'trigger'->>'connector_id'),
@@ -118,23 +133,14 @@ BEGIN
       "trigger_id": "http_request_received",
       "config": {}
     },
-    "start_at": "compute_priority",
+    "start_at": "check_quantity",
     "steps": {
-      "compute_priority": {
-        "type": "action",
-        "connector_id": "python",
-        "action_id": "python_execute",
-        "config": {
-          "code": "qty = data.get(''order'', {}).get(''quantity'', 0)\ndata[''priority''] = ''high'' if qty >= 100 else ''normal''"
-        },
-        "next": "check_priority"
-      },
-      "check_priority": {
+      "check_quantity": {
         "type": "branch",
         "condition": {
-          "field": "priority",
-          "operator": "eq",
-          "value": "high"
+          "field": "order.quantity",
+          "operator": "gte",
+          "value": 100
         },
         "on_true": "set_expedited",
         "on_false": "set_standard"
@@ -144,7 +150,7 @@ BEGIN
         "connector_id": "internal",
         "action_id": "transform_data",
         "config": {
-          "set": {"expedited": true, "shipping_days": 1}
+          "set": {"priority": "high", "expedited": true, "shipping_days": 1}
         },
         "next": "log_result"
       },
@@ -153,7 +159,7 @@ BEGIN
         "connector_id": "internal",
         "action_id": "transform_data",
         "config": {
-          "set": {"expedited": false, "shipping_days": 5}
+          "set": {"priority": "normal", "expedited": false, "shipping_days": 5}
         },
         "next": "log_result"
       },

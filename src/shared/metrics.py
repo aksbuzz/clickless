@@ -1,7 +1,7 @@
 """
 Prometheus metrics for workflow automation system.
 """
-from prometheus_client import Counter, Histogram, Gauge, Info
+from prometheus_client import Counter, Histogram, Info
 
 # Workflow Instance Metrics
 workflow_started_total = Counter(
@@ -41,18 +41,6 @@ step_retry_total = Counter(
     'step_retry_total',
     'Total number of step retries',
     ['workflow_name', 'step_name']
-)
-
-# System Metrics
-active_workflows = Gauge(
-    'active_workflows',
-    'Number of currently active (running) workflows'
-)
-
-celery_queue_depth = Gauge(
-    'celery_queue_depth',
-    'Number of tasks in Celery queues',
-    ['queue_name']
 )
 
 # Error Metrics

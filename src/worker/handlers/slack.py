@@ -1,7 +1,7 @@
 import httpx
 
-from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
+from src.shared.net_guard import OutboundBlocked, check_url
 from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
 
@@ -9,7 +9,7 @@ from src.worker.registry import action
 @action("slack_send_message")
 class SlackSendMessageHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         webhook_url = config.get("webhook_url", "")
         text = config.get("text", "")
 
@@ -24,15 +24,21 @@ class SlackSendMessageHandler:
         if config.get("username"):
             payload["username"] = config["username"]
 
+        try:
+            check_url(webhook_url)
+        except OutboundBlocked as e:
+            return ActionResult(ActionStatus.FAILURE, data, error_message=f"Blocked outbound request: {e}")
+
         log.info("Sending Slack message", instance_id=instance_id, channel=config.get("channel"))
         try:
-            response = httpx.post(webhook_url, json=payload, timeout=30)
-            data["slack_response"] = {"status_code": response.status_code}
-            if response.is_success:
+            with httpx.stream("POST", webhook_url, json=payload, timeout=30) as response:
+                status_code, is_success = response.status_code, response.is_success
+            data["slack_response"] = {"status_code": status_code}
+            if is_success:
                 log.info("Slack message sent", instance_id=instance_id)
                 return ActionResult(ActionStatus.SUCCESS, data)
             else:
-                return ActionResult(ActionStatus.FAILURE, data, error_message=f"Slack returned HTTP {response.status_code}")
+                return ActionResult(ActionStatus.FAILURE, data, error_message=f"Slack returned HTTP {status_code}")
         except httpx.TimeoutException:
             return ActionResult(ActionStatus.FAILURE, data, error_message="Slack webhook timed out")
         except httpx.RequestError as e:
