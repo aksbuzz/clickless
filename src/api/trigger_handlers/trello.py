@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import json
 from typing import Any, Dict, List
 
@@ -9,8 +12,23 @@ from src.shared.triggers.ports import TriggerHandlerPort
 class TrelloTriggerHandler(TriggerHandlerPort):
 
     def validate_webhook(self, headers: Dict[str, str], body: bytes, config: Dict[str, Any]) -> TriggerValidationResult:
-        # Trello verifies callback URLs via HEAD request at registration time.
-        # No cryptographic signature on POST events.
+        # Trello signs each delivery: base64(HMAC-SHA1(app secret, raw body + callback URL)), sent in the
+        # X-Trello-Webhook header. The callback URL is the one the webhook was registered with.
+        api_secret = config.get("api_secret")
+        callback_url = config.get("callback_url")
+        if not api_secret or not callback_url:
+            log.error("Trello webhook rejected: set TRELLO_API_SECRET and TRELLO_CALLBACK_URL")
+            return TriggerValidationResult(is_valid=False, error_message="Trello webhook secret is not configured")
+
+        signature = headers.get("x-trello-webhook", "")
+        if not signature:
+            return TriggerValidationResult(is_valid=False, error_message="Missing X-Trello-Webhook header")
+
+        digest = hmac.new(api_secret.encode("utf-8"), body + callback_url.encode("utf-8"), hashlib.sha1).digest()
+        expected = base64.b64encode(digest)
+        if not hmac.compare_digest(expected, signature.encode("utf-8")):
+            return TriggerValidationResult(is_valid=False, error_message="Invalid signature")
+
         return TriggerValidationResult(is_valid=True)
 
     def parse_events(self, headers: Dict[str, str], body: bytes) -> List[TriggerEvent]:

@@ -12,20 +12,11 @@ from src.shared.triggers.ports import TriggerHandlerPort
 class SlackTriggerHandler(TriggerHandlerPort):
 
     def validate_webhook(self, headers: Dict[str, str], body: bytes, config: Dict[str, Any]) -> TriggerValidationResult:
-        # Handle Slack url_verification challenge
-        try:
-            payload = json.loads(body)
-            if payload.get("type") == "url_verification":
-                return TriggerValidationResult(
-                    is_valid=True,
-                    challenge_response=payload.get("challenge", ""),
-                )
-        except (json.JSONDecodeError, KeyError):
-            pass
-
         signing_secret = config.get("signing_secret")
         if not signing_secret:
-            return TriggerValidationResult(is_valid=True)
+            # Fail closed, including for the url_verification handshake.
+            log.error("Slack webhook rejected: no signing secret is configured (set SLACK_SIGNING_SECRET)")
+            return TriggerValidationResult(is_valid=False, error_message="Signing secret is not configured")
 
         timestamp = headers.get("x-slack-request-timestamp", "")
         slack_signature = headers.get("x-slack-signature", "")
@@ -40,15 +31,23 @@ class SlackTriggerHandler(TriggerHandlerPort):
         except ValueError:
             return TriggerValidationResult(is_valid=False, error_message="Invalid timestamp")
 
-        sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+        sig_basestring = b"v0:" + timestamp.encode("utf-8") + b":" + body
         expected_sig = "v0=" + hmac.new(
             signing_secret.encode("utf-8"),
-            sig_basestring.encode("utf-8"),
+            sig_basestring,
             hashlib.sha256,
         ).hexdigest()
 
-        if not hmac.compare_digest(expected_sig, slack_signature):
+        if not hmac.compare_digest(expected_sig.encode("utf-8"), slack_signature.encode("utf-8")):
             return TriggerValidationResult(is_valid=False, error_message="Invalid Slack signature")
+
+        # Only a verified request may complete Slack's url_verification handshake.
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("type") == "url_verification":
+            return TriggerValidationResult(is_valid=True, challenge_response=payload.get("challenge", ""))
 
         return TriggerValidationResult(is_valid=True)
 

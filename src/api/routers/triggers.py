@@ -16,6 +16,11 @@ def _get_connector_config(connector_id: str) -> dict:
         return {"webhook_secret": os.getenv("GITHUB_WEBHOOK_SECRET", "")}
     elif connector_id == "slack":
         return {"signing_secret": os.getenv("SLACK_SIGNING_SECRET", "")}
+    elif connector_id == "trello":
+        return {
+            "api_secret": os.getenv("TRELLO_API_SECRET", ""),
+            "callback_url": os.getenv("TRELLO_CALLBACK_URL", ""),
+        }
     return {}
 
 

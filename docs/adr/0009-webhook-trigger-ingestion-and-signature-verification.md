@@ -1,6 +1,6 @@
 # 0009. Webhook trigger ingestion and per-provider signature verification
 
-- Status: Accepted - under review (known gaps: F-03, F-04, F-18)
+- Status: Accepted - under review (known gap: F-18; F-03 and F-04 fixed on 2026-10-10)
 - Date: 2026-10-07 (recorded retrospectively)
 
 ## Context
@@ -22,7 +22,7 @@ Verification per provider:
 |---|---|---|
 | GitHub | HMAC-SHA256 of the raw body, `X-Hub-Signature-256`, constant-time compare | env `GITHUB_WEBHOOK_SECRET` |
 | Slack | v0 signing secret over `v0:{timestamp}:{body}`, 5 minute replay window | env `SLACK_SIGNING_SECRET` |
-| Trello | none (only a `HEAD` route for registration) | n/a |
+| Trello | base64 HMAC-SHA1 of the raw body plus the callback URL, `X-Trello-Webhook` (since 2026-10-10) | env `TRELLO_API_SECRET` and `TRELLO_CALLBACK_URL` |
 
 Two further entry points exist for the `http` / `webhook` trigger types: `POST /webhooks/{workflow_name}` and `POST /workflows/{definition_name}/run`.
 
@@ -42,8 +42,8 @@ Positive:
 
 Negative / known gaps:
 
-- Verification fails open: if the secret is empty, GitHub and Slack handlers return valid (`github.py:20-22`, `slack.py:26-28`). The compose file defaults both variables to empty (`${GITHUB_WEBHOOK_SECRET:-}`), so a default deployment accepts forged events (F-04).
-- Trello events are never authenticated, and `POST /webhooks/{workflow_name}`, `/run` and everything under `/admin` are open (F-03).
+- Fixed on 2026-10-10 (F-04): verification now fails closed. With no secret configured, GitHub, Slack and Trello requests are rejected with 401, and Slack's `url_verification` handshake is answered only after its signature checks out. Previously an empty secret (the compose default) accepted forged events, and Trello was never verified. The Trello scheme follows Trello's documented webhook signing; confirm it against a real delivery. Signature comparisons are done on bytes, so a malformed header is a rejection rather than a crash.
+- Fixed on 2026-10-10 (F-03): `POST /webhooks/{workflow_name}`, `/run` and everything under `/admin` now require the API key (ADR 0020).
 - Secrets are global per provider, not per workflow.
 - No deduplication: GitHub redeliveries and Slack retries (`X-Slack-Retry-Num`, `event_id`) each create a new instance (F-18).
 - The route is `async def` but calls synchronous psycopg2 code, blocking the event loop in that worker for the duration of the database work (ADR 0012).

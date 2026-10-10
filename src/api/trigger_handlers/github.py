@@ -19,7 +19,9 @@ class GitHubTriggerHandler(TriggerHandlerPort):
     def validate_webhook(self, headers: Dict[str, str], body: bytes, config: Dict[str, Any]) -> TriggerValidationResult:
         webhook_secret = config.get("webhook_secret")
         if not webhook_secret:
-            return TriggerValidationResult(is_valid=True)
+            # Fail closed: without a secret every request would be unauthenticated.
+            log.error("GitHub webhook rejected: no webhook secret is configured (set GITHUB_WEBHOOK_SECRET)")
+            return TriggerValidationResult(is_valid=False, error_message="Webhook secret is not configured")
 
         signature_header = headers.get("x-hub-signature-256", "")
         if not signature_header:
@@ -31,7 +33,7 @@ class GitHubTriggerHandler(TriggerHandlerPort):
             hashlib.sha256,
         ).hexdigest()
 
-        if not hmac.compare_digest(expected_sig, signature_header):
+        if not hmac.compare_digest(expected_sig.encode("utf-8"), signature_header.encode("utf-8")):
             return TriggerValidationResult(is_valid=False, error_message="Invalid signature")
 
         return TriggerValidationResult(is_valid=True)
