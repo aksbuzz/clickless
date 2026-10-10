@@ -33,7 +33,7 @@ Positive:
 Negative / known gaps (details in the audit):
 
 - A clean clone could not build: `WorkflowGraph.tsx` imports `../lib/graph-layout`, which was never committed because the root `.gitignore` rule `lib/` also matched `frontend/src/lib/` (F-24). Fixed on 2026-10-10: the module was rewritten and the ignore rule anchored.
-- The proxy forwards every `/api/*` path, exposing `/admin/recover`, `/metrics` and `/connections/*` on the UI port, and there is no authentication layer (F-03, F-25).
+- The proxy used to forward every `/api/*` path with no authentication layer (F-03, F-25). Fixed on 2026-10-10: the UI asks for an API key, sends it with every request, and nginx no longer exposes admin, metrics, trigger or webhook paths (ADR 0020).
 - Error handling in `api.ts` ignores `validation_errors` and non-string `detail`, so users see generic messages or `[object Object]` (F-26). Polling has no stale-response guard and a single failed poll replaces the page with an error (F-27).
 - The builder has no client-side validation, edits `next` links without keeping them consistent when steps are reordered, and loses focus while renaming steps (F-28). Inline credentials remain in definitions when a connection is selected (F-19).
 - There are no frontend tests, no ErrorBoundary and almost no accessibility attributes (F-29). `npm audit` reports vulnerable dependencies (F-30). nginx sends no security headers (F-25).

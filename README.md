@@ -34,20 +34,20 @@ cd workflow_automate
 
 ### Step 2: Setup environment
 
-Copy the example file:
+Generate your settings. This creates `.env` with random passwords and an API key, and prints the key:
 
 ```bash
-cp .env.example .env
+sh scripts/init-env.sh
 ```
 
-Open `.env` file and add your settings.
+Do not copy `.env.example` by hand: Docker Compose and the API refuse to start without these secrets.
 
 ### Step 3: Start the app
 
 Run this command:
 
 ```bash
-docker-compose up --build -d
+docker compose up --build -d
 ```
 
 Wait 1-2 minutes. Docker will download and start everything.
@@ -60,8 +60,20 @@ Wait 1-2 minutes. Docker will download and start everything.
 
 After starting, open your web browser:
 
-- **Frontend (Website)**: http://localhost:3000
-- **API (Backend)**: http://localhost:8000
+- **Frontend (Website)**: http://localhost:3000. It asks for the API key printed in step 2 (also in `.env` as `API_KEY`).
+- **API (Backend)**: http://localhost:8000. Every request needs the header `Authorization: Bearer <API_KEY>`.
+
+Both listen on this machine only. Set `BIND_ADDRESS=0.0.0.0` in `.env` to expose them, and only do that behind something that provides TLS and access control.
+
+### Security settings
+
+| Setting (in `.env`) | What it does |
+|---|---|
+| `API_KEY` | The shared key for the API and UI. At least 16 characters; the API will not start without it. |
+| `GITHUB_WEBHOOK_SECRET`, `SLACK_SIGNING_SECRET`, `TRELLO_API_SECRET` + `TRELLO_CALLBACK_URL` | Secrets used to verify webhooks from each provider. A provider's webhook is **rejected while its secret is empty**. Point providers at `http://<your-host>:8000/triggers/<github\|slack\|trello>/webhook`. |
+| `OUTBOUND_ALLOW_HOSTS` | Workflows may only call public addresses. List internal hosts (comma-separated) that they may also call, for example a private database. |
+
+RabbitMQ, Redis and PostgreSQL are not published to the host. For a local database browser run `docker compose --profile dev-tools up` (adminer on http://127.0.0.1:8080).
 
 ### Create a workflow
 

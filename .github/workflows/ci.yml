@@ -37,6 +37,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test   # node's built-in runner; needs Node 22.18+ to run TypeScript directly
       - run: npm run build
 
   smoke:
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Start the stack (base compose file only, no dev override)
         run: |
-          cp .env.example .env
+          sh scripts/init-env.sh
           docker compose -f docker-compose.yml up -d --build
       - name: Run the seeded workflow down both branches
         run: sh scripts/smoke.sh

@@ -1,13 +1,16 @@
 #!/bin/sh
-# End-to-end smoke test against a running stack: wait until healthy, run the seeded
-# order_priority_workflow down both branches, and check the results.
+# End-to-end smoke test against a running stack. It checks that the security configuration holds, then
+# runs the seeded order_priority_workflow down both branches and checks the results.
 #
-#   docker compose up --build -d && sh scripts/smoke.sh
+#   sh scripts/init-env.sh && docker compose up --build -d && sh scripts/smoke.sh
 #
-# API_URL overrides the default http://localhost:8000.
+# The API key comes from $API_KEY or from .env. API_URL (default http://localhost:8000) and UI_URL
+# (default http://localhost:3000) point at the stack.
 set -eu
 
 API="${API_URL:-http://localhost:8000}"
+UI="${UI_URL:-http://localhost:3000}"
+
 fail() {
   echo "SMOKE FAILED: $*" >&2
   exit 1
@@ -23,10 +26,28 @@ for candidate in python3 python; do
 done
 [ -n "$PY" ] || fail "no working python3 or python on PATH"
 
+KEY="${API_KEY:-}"
+if [ -z "$KEY" ] && [ -f .env ]; then
+  KEY="$(grep '^API_KEY=' .env | head -1 | cut -d= -f2-)"
+fi
+[ -n "$KEY" ] || fail "no API key: set API_KEY or run sh scripts/init-env.sh"
+AUTH="Authorization: Bearer $KEY"
+
+status() {  # status <curl args...>  prints the HTTP status code
+  curl -s -o /dev/null -w '%{http_code}' "$@"
+}
+
+expect_status() {  # expect_status <expected> <description> <curl args...>
+  expected="$1"; description="$2"; shift 2
+  got="$(status "$@")"
+  [ "$got" = "$expected" ] || fail "$description: expected HTTP $expected, got $got"
+  echo "  ok: $description"
+}
+
 wait_for_health() {
   echo "Waiting for $API/health (postgres, redis, rabbitmq and celery workers) ..."
   i=0
-  until curl -fsS "$API/health" >/dev/null 2>&1; do
+  until curl -fsS -H "$AUTH" "$API/health" >/dev/null 2>&1; do
     i=$((i + 1))
     [ "$i" -le 90 ] || fail "stack did not become healthy within 180 s"
     sleep 2
@@ -34,25 +55,79 @@ wait_for_health() {
   echo "healthy"
 }
 
+port_closed() {  # port_closed <port> <name>
+  "$PY" -c '
+import socket, sys
+s = socket.socket(); s.settimeout(1)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) != 0 else 1)
+' "$1" || fail "$2 (port $1) is reachable from the host; it should only be reachable inside the compose network"
+  echo "  ok: $2 is not published (port $1)"
+}
+
+check_security() {
+  echo "Security checks:"
+  expect_status 401 "API rejects a request without a key" "$API/workflows"
+  expect_status 401 "API rejects a wrong key" -H "Authorization: Bearer not-the-key" "$API/workflows"
+  expect_status 401 "admin endpoint needs the key" -X POST "$API/admin/recover"
+  expect_status 200 "readiness probe stays public" "$API/ready"
+  expect_status 401 "unsigned GitHub webhook is rejected" -X POST -d '{}' "$API/triggers/github/webhook"
+  expect_status 401 "unsigned Slack webhook is rejected" -X POST -d '{}' "$API/triggers/slack/webhook"
+  expect_status 404 "UI proxy does not expose /admin" -X POST -H "$AUTH" "$UI/api/admin/recover"
+  expect_status 404 "UI proxy does not expose /metrics" -H "$AUTH" "$UI/api/metrics"
+  expect_status 200 "UI proxy passes API calls through" -H "$AUTH" "$UI/api/workflows"
+  port_closed 5672 "RabbitMQ"
+  port_closed 6379 "Redis"
+  port_closed 5432 "PostgreSQL"
+}
+
+# A workflow that tries to reach an internal service must fail visibly, not hang and not connect.
+check_outbound_guard() {
+  echo "Outbound request guard:"
+  name="smoke_guard_$(date +%s)"
+  definition='{"trigger":{"connector_id":"http","trigger_id":"http_request_received","config":{}},"start_at":"probe","steps":{"probe":{"type":"action","connector_id":"http","action_id":"http_request","config":{"url":"http://rabbitmq:15672/api/overview","method":"GET"},"next":"end"}}}'
+  curl -fsS -X POST "$API/workflows" -H "$AUTH" -H 'Content-Type: application/json'     -d "{\"name\": \"$name\", \"definition\": $definition}" >/dev/null || fail "could not create the guard probe workflow"
+  resp="$(curl -fsS -X POST "$API/workflows/$name/run" -H "$AUTH" -H 'Content-Type: application/json' -d '{"data": {}}')"     || fail "could not start the guard probe workflow"
+  id="$(printf '%s' "$resp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])')"
+
+  i=0
+  while :; do
+    state="$(curl -fsS -H "$AUTH" "$API/instances/$id" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+    case "$state" in
+      failed) break ;;
+      completed) fail "a call to the internal RabbitMQ admin API succeeded; the outbound guard is not working" ;;
+    esac
+    i=$((i + 1))
+    [ "$i" -le 60 ] || fail "guard probe instance $id is still '$state' after 60 s (a failed step must fail its instance)"
+    sleep 1
+  done
+
+  curl -fsS -H "$AUTH" "$API/instances/$id/steps" | "$PY" -c '
+import json, sys
+errors = [s.get("error_details") or "" for s in json.load(sys.stdin)]
+assert any("Blocked outbound request" in e for e in errors), "no blocked-request reason in %r" % (errors,)
+' || fail "instance $id failed, but not because the request was blocked"
+  echo "  ok: a call to an internal service fails with the reason shown"
+}
+
 # run_case <quantity> <expected priority> <expected shipping_days>
 run_case() {
   quantity="$1"; priority="$2"; days="$3"
   resp="$(curl -fsS -X POST "$API/workflows/order_priority_workflow/run" \
-    -H 'Content-Type: application/json' \
+    -H "$AUTH" -H 'Content-Type: application/json' \
     -d "{\"data\": {\"order\": {\"quantity\": $quantity}}}")" || fail "could not start the workflow"
   id="$(printf '%s' "$resp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["instance_id"])')"
   echo "quantity=$quantity -> instance $id"
 
   i=0
   while :; do
-    inst="$(curl -fsS "$API/instances/$id")" || fail "could not read instance $id"
-    status="$(printf '%s' "$inst" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
-    case "$status" in
+    inst="$(curl -fsS -H "$AUTH" "$API/instances/$id")" || fail "could not read instance $id"
+    state="$(printf '%s' "$inst" | "$PY" -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+    case "$state" in
       completed) break ;;
-      failed|cancelled) fail "instance $id ended as $status: $inst" ;;
+      failed|cancelled) fail "instance $id ended as $state: $inst" ;;
     esac
     i=$((i + 1))
-    [ "$i" -le 60 ] || fail "instance $id still '$status' after 60 s: $inst"
+    [ "$i" -le 60 ] || fail "instance $id still '$state' after 60 s: $inst"
     sleep 1
   done
 
@@ -65,7 +140,7 @@ assert got_priority == want_priority, "priority %r != %r" % (got_priority, want_
 assert got_days == want_days, "shipping_days %r != %r" % (got_days, want_days)
 ' "$priority" "$days" || fail "unexpected result data for instance $id: $inst"
 
-  steps="$(curl -fsS "$API/instances/$id/steps")" || fail "could not read steps of $id"
+  steps="$(curl -fsS -H "$AUTH" "$API/instances/$id/steps")" || fail "could not read steps of $id"
   printf '%s' "$steps" | "$PY" -c '
 import json, sys
 steps = json.load(sys.stdin)
@@ -76,6 +151,8 @@ assert steps and not bad, "steps not completed: %r" % (bad,)
 }
 
 wait_for_health
+check_security
+check_outbound_guard
 run_case 150 high 1
 run_case 30 normal 5
 echo "SMOKE OK"

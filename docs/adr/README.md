@@ -25,6 +25,8 @@ ADRs 0002 to 0016 were written retrospectively on 2026-10-07 from the code, the 
 | [0017](0017-postgres-backed-job-queue-replaces-outbox-broker-and-celery.md) | Postgres-backed job queue replaces outbox, broker, Celery, Redis lock | **Proposed** |
 | [0018](0018-one-job-per-step-with-lease-fencing-and-single-transaction-advance.md) | One job per step, lease fencing, single-transaction advance | **Proposed** |
 | [0019](0019-remove-the-in-process-python-code-step.md) | Remove the in-process Python code step | Accepted |
+| [0020](0020-shared-api-key-authentication-and-private-internal-services.md) | Shared API key authentication, private internal services | Accepted |
+| [0021](0021-guard-outbound-requests-from-workflow-handlers.md) | Guard outbound requests from workflow handlers | Accepted |
 
 ## Conventions
 

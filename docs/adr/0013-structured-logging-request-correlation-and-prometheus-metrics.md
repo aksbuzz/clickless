@@ -38,7 +38,7 @@ Negative / known gaps (F-15):
 - The HTTP `endpoint` label is the raw URL path, which includes instance and workflow UUIDs: unbounded label cardinality. `workflow_name` and `step_name` labels are user-defined and can grow without limit as well.
 - Correlation breaks after the first action: the worker writes its result to the outbox without a `request_id` (`src/worker/service.py`), as does the recovery sweeper, so later steps log and store no id.
 - The id is not returned to the caller (no `X-Request-ID` response header) and an inbound id is not honoured, which limits cross-system correlation. Unhandled exceptions skip the context cleanup in the middleware.
-- `/health` fans out a Celery inspect call on every request, which is slow and unsuitable as a container liveness probe; no compose service defines a healthcheck for the application containers. `/health` and `/metrics` are unauthenticated and disclose worker names and Redis memory.
+- `/health` fans out a Celery inspect call on every request, which is slow and unsuitable as a container liveness probe; no compose service defines a healthcheck for the application containers. `/health` and `/metrics` disclose worker names and Redis memory; since 2026-10-10 they require the API key (ADR 0020), while `/ready` stays public for probes.
 - No distributed tracing, and `step_duration_seconds` records `action_type="unknown"`.
 
 ## References

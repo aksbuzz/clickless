@@ -5,15 +5,36 @@ import type {
   RunWorkflowResponse, CancelInstanceResponse, SendEventResponse,
   CreateConnectionResponse, MessageResponse,
 } from './types';
+import { authHeaders, handleUnauthorized } from './auth.ts';
+
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('Invalid or missing API key');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+/** fetch with the API key attached; a 401 forgets the key (so the UI asks again) and rejects. */
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  const res = await fetch(path, {
+    ...init,
+    headers: { ...authHeaders(), ...(init.headers as Record<string, string> | undefined) },
+  });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new UnauthorizedError();
+  }
+  return res;
+}
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+  const res = await request(path);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await request(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -32,7 +53,7 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function put<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+  const res = await request(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -51,7 +72,7 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
 }
 
 async function del<T>(path: string): Promise<T> {
-  const res = await fetch(path, { method: 'DELETE' });
+  const res = await request(path, { method: 'DELETE' });
   if (!res.ok) {
     const errBody = await res.json().catch(() => null);
     const detail = errBody?.detail;
@@ -64,6 +85,17 @@ async function del<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  // Authentication: check a candidate key without storing it (a 401 here must not clear the stored key).
+  checkApiKey: async (key: string): Promise<boolean> => {
+    const res = await fetch('/api/connectors', { headers: { Authorization: `Bearer ${key.trim()}` } });
+    if (res.status === 401) return false;
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => null);
+      throw new Error(typeof errBody?.detail === 'string' ? errBody.detail : `${res.status} ${res.statusText}`);
+    }
+    return true;
+  },
+
   // Workflows
   getWorkflows: () =>
     get<Workflow[]>('/api/workflows'),

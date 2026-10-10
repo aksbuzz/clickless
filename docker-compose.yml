@@ -2,9 +2,9 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?run scripts/init-env.sh to create .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/init-env.sh to create .env}
+      POSTGRES_DB: ${POSTGRES_DB:?run scripts/init-env.sh to create .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -13,33 +13,38 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
       - app-network
 
+  # No published ports for the broker and cache: only containers on this network can reach them.
   rabbitmq:
     image: rabbitmq:4-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?run scripts/init-env.sh to create .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?run scripts/init-env.sh to create .env}
     volumes:
       - ./infrastructure/rabbitmq/celery-compat.conf:/etc/rabbitmq/conf.d/20-celery-compat.conf:ro
-    ports:
-      - "5672:5672"
-      - "15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
       - app-network
 
   redis:
     image: redis:8-alpine
-    ports:
-      - "6379:6379"
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?run scripts/init-env.sh to create .env}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
     networks:
       - app-network
 
@@ -48,10 +53,19 @@ services:
     env_file: .env
     command: gunicorn -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:8000 --workers 4 --timeout 60
     environment:
+      API_KEY: ${API_KEY:?run scripts/init-env.sh to create .env}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET:-}
+      TRELLO_API_SECRET: ${TRELLO_API_SECRET:-}
+      TRELLO_CALLBACK_URL: ${TRELLO_CALLBACK_URL:-}
     ports:
-      - "8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,6 +73,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 
@@ -67,10 +82,13 @@ services:
     env_file: .env
     command: celery -A src.shared.celery_app.app worker --loglevel=info -Q orchestration_queue -n engine@%h
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 
@@ -81,10 +99,13 @@ services:
     deploy:
       replicas: 2
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 
@@ -93,19 +114,24 @@ services:
     env_file: .env
     command: python src/relay/entrypoint/main.py
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 
   frontend:
     build: ./frontend
     ports:
-      - "3000:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:3000:80"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - app-network
 

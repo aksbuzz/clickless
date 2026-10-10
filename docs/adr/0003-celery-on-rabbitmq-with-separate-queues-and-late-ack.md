@@ -44,10 +44,10 @@ Positive:
 Negative / known gaps:
 
 - A Celery retry that is exhausted fails the task and the message is acknowledged (default `acks_on_failure_or_timeout`). It is not dead-lettered. Only the explicit `Reject(requeue=False)` path reaches a DLQ, so `docs/reliability.md` overstates the DLQ guarantee. Nothing consumes or alerts on the DLQs (F-08).
-- The result backend is hard-coded to `redis://redis:6379/1`, ignoring `REDIS_URL`, and is unused because tasks return `None` (F-21).
+- The result backend was hard-coded to `redis://redis:6379/1`, ignoring `REDIS_URL`, and is unused because tasks return `None` (F-21). Removed on 2026-10-10 (`task_ignore_result=True`), which also lets Redis have a password.
 - Concurrency is not configured; Celery defaults to the CPU count per process, which interacts with DB pool sizing (ADR 0012, F-14). `docs/scalability.md` assumes gevent for action workers; the compose file uses the default prefork pool.
 - `beat_schedule` is defined but no `beat` process exists in compose (ADR 0007, F-07).
-- RabbitMQ and Redis ports are published to the host with default credentials (F-12).
+- RabbitMQ and Redis ports were published to the host with default credentials (F-12). Fixed on 2026-10-10: they are no longer published and require generated passwords (ADR 0020).
 - Celery 5.5 does not start against RabbitMQ 4 out of the box: its remote-control (pidbox) queues are transient and non-exclusive, which RabbitMQ 4 rejects, so every worker crash-loops. Found on 2026-10-10. Compose now mounts `infrastructure/rabbitmq/celery-compat.conf` to permit the deprecated feature. This is a stopgap, because RabbitMQ will remove the feature in a future major version (F-32).
 
 ## References

@@ -38,8 +38,8 @@ Negative / known gaps:
 
 - Dependencies are not role-specific: the relay and workers carry FastAPI and gunicorn, and the API carries Celery and the worker's HTTP clients. Unused packages are declared (`pika`, `boto3`), and `ruff` and `black`, which the Makefile calls, are not.
 - Layering leaks: the engine's Celery module imports `src.api.service` to run recovery (ADR 0007), `src/api/health.py` imports the Celery app, and `src/orchestration/domain/models.py` re-exports `EventType` from `shared` "for backward compat". There are unused modules (`src/orchestration/adapters/postgres_lock.py`, the `initial_step` and `final_step` handlers, the `active_workflows` gauge).
-- Compose runs the `api`, `engine`, `worker` and `relay` containers without `depends_on` on Postgres for three of them, without healthchecks, restart policies or resource limits. The Dockerfile default `CMD` (`python -m src.api.main`) does nothing because `main.py` has no `__main__` block; every service relies on its compose `command`.
-- `docker-compose.override.yml` is picked up automatically, so a plain `docker compose up` runs dev mode: `uvicorn --reload`, source mounts, debug logs and an `adminer` service on port 8080.
+- Compose ran the `api`, `engine`, `worker` and `relay` containers without `depends_on` on Postgres for three of them, without healthchecks, restart policies or resource limits. Since 2026-10-10 they wait for Postgres, restart unless stopped, and the API has a health check; resource limits are still missing. The Dockerfile default `CMD` (`python -m src.api.main`) does nothing because `main.py` has no `__main__` block; every service relies on its compose `command`.
+- `docker-compose.override.yml` is picked up automatically, so a plain `docker compose up` runs dev mode: `uvicorn --reload`, source mounts and debug logs. Adminer is now off unless `--profile dev-tools` is given and binds to localhost.
 - The README layout section still lists a nonexistent `engine/` directory (F-22).
 
 ## References

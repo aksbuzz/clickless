@@ -8,11 +8,11 @@ RABBITMQ_URL = os.getenv("RABBITMQ_URL")
 
 app = Celery('workflows', 
   broker=RABBITMQ_URL, 
-  backend='redis://redis:6379/1',
   include=['src.orchestration.entrypoint.celery_task', 'src.worker.task']
 )
 
 app.conf.update(
+  task_ignore_result=True,  # results are never read; this also avoids a hardcoded, unauthenticated Redis backend
   task_ack_late=True,
   worker_prefetch_multiplier=1,
   task_default_delivery_mode='persistent',
