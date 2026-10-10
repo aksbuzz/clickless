@@ -1,4 +1,4 @@
-"""Unit tests for API service with mocked dependencies."""
+"""Unit tests for the API service. The database seam (db_cursor) and the repository are mocked."""
 import os
 import pytest
 from unittest.mock import Mock, MagicMock, patch
@@ -8,8 +8,8 @@ os.environ.setdefault('REDIS_URL', 'redis://localhost:6379')
 os.environ.setdefault('DATABASE_URL', 'postgresql://user:pass@localhost/test')
 os.environ.setdefault('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/')
 
-from src.api.application.service import WorkflowManagementService
-from src.api.domain.exceptions import (
+from src.api.service import WorkflowManagementService
+from src.api.errors import (
     WorkflowNotFoundError,
     InstanceNotFoundError,
     InvalidStateError,
@@ -21,15 +21,18 @@ from src.shared.connectors.models import Connector, ActionDefinition
 
 
 class TestWorkflowManagementService:
-    """Tests for WorkflowManagementService with mocked UoW."""
+    """Tests for WorkflowManagementService with a mocked cursor and repository."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_uow = Mock()
         self.mock_repo = Mock()
-        self.mock_uow.repo = self.mock_repo
-        self.mock_uow.__enter__ = Mock(return_value=self.mock_uow)
-        self.mock_uow.__exit__ = Mock(return_value=False)
+        cursor_patch = patch("src.api.service.db_cursor")
+        db_cursor = cursor_patch.start()
+        db_cursor.return_value.__enter__.return_value = Mock()
+        db_cursor.return_value.__exit__.return_value = False
+        repo_patch = patch("src.api.service.WorkflowRepository", return_value=self.mock_repo)
+        repo_patch.start()
+        self._patches = [cursor_patch, repo_patch]
 
         # Setup connector registry
         self.registry = ConnectorRegistry()
@@ -55,7 +58,11 @@ class TestWorkflowManagementService:
         )
         self.registry.register(http_connector)
 
-        self.service = WorkflowManagementService(self.mock_uow, self.registry)
+        self.service = WorkflowManagementService(self.registry)
+
+    def teardown_method(self):
+        for p in self._patches:
+            p.stop()
 
     def test_create_workflow_success(self):
         """Test successfully creating a workflow."""
@@ -168,7 +175,7 @@ class TestWorkflowManagementService:
         assert result[0]["id"] == "wf-1"
         self.mock_repo.list_workflows.assert_called_once()
 
-    @patch('src.api.application.service.structlog')
+    @patch('src.api.service.structlog')
     def test_start_workflow_success(self, mock_structlog):
         """Test starting a workflow."""
         mock_structlog.contextvars.get_contextvars.return_value = {"request_id": "req-123"}

@@ -227,9 +227,28 @@ workflow_automate/
 
 ### Run tests
 
+Backend unit tests (Python 3.12, dependencies from `poetry.lock`):
+
 ```bash
-pytest
+poetry install --no-root
+make test        # or: python -m pytest -q tests
 ```
+
+Frontend lint and build:
+
+```bash
+cd frontend && npm ci && npm run lint && npm run build
+```
+
+End-to-end smoke test. It runs the seeded workflow down both branches against a running stack:
+
+```bash
+cp .env.example .env
+docker compose up --build -d
+make smoke       # or: sh scripts/smoke.sh
+```
+
+CI (`.github/workflows/ci.yml`) runs all three.
 
 ### Add a new connector
 

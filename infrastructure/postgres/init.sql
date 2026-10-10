@@ -29,12 +29,14 @@ CREATE TABLE workflow_instances (
   current_step VARCHAR(100),
   current_step_attempts INTEGER DEFAULT 0,
   data JSONB,
+  request_id VARCHAR(36),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
   FOREIGN KEY (workflow_version_id) REFERENCES workflow_versions(id)
 );
 CREATE INDEX idx_instances_status ON workflow_instances (status);
+CREATE INDEX idx_instances_request_id ON workflow_instances (request_id);
 
 
 CREATE TABLE workflow_step_executions (
@@ -48,11 +50,13 @@ CREATE TABLE workflow_step_executions (
   input_data JSONB,
   output_data JSONB,
   error_details TEXT,
+  request_id VARCHAR(36),
   
   FOREIGN KEY (instance_id) REFERENCES workflow_instances(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_step_exec_instance ON workflow_step_executions (instance_id);
 CREATE INDEX idx_step_exec_status ON workflow_step_executions (status);
+CREATE INDEX idx_step_exec_request_id ON workflow_step_executions (request_id);
 
 
 CREATE TABLE outbox (
@@ -61,9 +65,11 @@ CREATE TABLE outbox (
   payload JSONB NOT NULL,
   publish_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  processed_at TIMESTAMP WITH TIME ZONE NULL
+  processed_at TIMESTAMP WITH TIME ZONE NULL,
+  request_id VARCHAR(36)
 );
 CREATE INDEX idx_outbox_unprocessed ON outbox (processed_at) WHERE processed_at IS NULL;
+CREATE INDEX idx_outbox_request_id ON outbox (request_id);
 
 CREATE INDEX idx_versions_trigger ON workflow_versions (
   (definition->'trigger'->>'connector_id'),

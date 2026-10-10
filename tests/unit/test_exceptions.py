@@ -1,6 +1,6 @@
 """Unit tests for custom exceptions."""
 import pytest
-from src.api.domain.exceptions import (
+from src.api.errors import (
     WorkflowNotFoundError,
     InstanceNotFoundError,
     InvalidStateError,

@@ -1,4 +1,6 @@
 -- Migration: Add request_id for distributed tracing
+-- Fresh databases already get these columns from infrastructure/postgres/init.sql.
+-- Apply this file only to a database that was created before that change; it is idempotent.
 
 -- Add request_id to workflow_instances
 ALTER TABLE workflow_instances

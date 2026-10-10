@@ -18,6 +18,8 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-alpine
+    volumes:
+      - ./infrastructure/rabbitmq/celery-compat.conf:/etc/rabbitmq/conf.d/20-celery-compat.conf:ro
     ports:
       - "5672:5672"
       - "15672:15672"

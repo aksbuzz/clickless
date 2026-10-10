@@ -1,0 +1,3 @@
+# Makefile recipes need tabs and LF line endings, and shell scripts must not get CRLF on Windows checkouts.
+Makefile text eol=lf
+*.sh text eol=lf
