@@ -5,30 +5,29 @@
 
 ## Context
 
-The platform has grown over roughly 20 commits into several cooperating processes (API, relay, engine, action workers, beat) backed by PostgreSQL, RabbitMQ and Redis. The `docs/*.md` files explain how the system works, but they do not record why choices were made, which alternatives were rejected, or which trade-offs were accepted knowingly. Some of those documents have also drifted from the code (see audit finding F-22).
+The platform runs as several cooperating pieces backed by PostgreSQL. The documents under `docs/` explain how it works, but they do not say why choices were made, which alternatives were rejected, or which trade-offs were accepted knowingly.
 
 ## Decision
 
 Keep a decision log in `docs/adr/`:
 
-- One Markdown file per decision, named `NNNN-kebab-title.md`, numbered in order of recording.
+- One Markdown file per decision, named `NNNN-kebab-title.md`, numbered in the order recorded. Numbers are never reused.
 - Each ADR has: Status, Date, Context, Decision, Alternatives considered, Consequences, and References.
-- An accepted ADR is not rewritten to hide history. To change a decision, add a new ADR and mark the old one `Superseded by NNNN`. Factual corrections and added cross-references are fine.
-- Statuses: `Proposed`, `Accepted`, `Accepted - under review` (in force but known to be unsatisfactory), `Superseded by NNNN`, `Rejected`.
-- A pull request that changes one of these decisions adds or supersedes an ADR in the same PR.
-
-ADRs 0002 to 0016 were written retrospectively on 2026-10-07 from the code, git history and `docs/*.md`. They describe the system as it is, not as it was intended to be.
+- **The log describes the code as it is.** An ADR is edited when the code it describes changes. When a decision is replaced and its code is removed, the old ADR is deleted, not kept as "superseded": the reasoning that still matters moves into the ADR that replaced it, and git history keeps the original. The index (`README.md`) lists the numbers that no longer exist.
+- Statuses: `Proposed`, `Accepted`, `Accepted - under review` (in force but with known problems), `Rejected`.
+- A pull request that changes one of these decisions edits or adds an ADR in the same PR.
 
 ## Alternatives considered
 
-- Keep everything in `docs/architecture.md`: it describes the structure well, but mixing rationale into an overview makes both harder to maintain, and decisions get overwritten instead of superseded.
-- Rely on commit messages and PR descriptions: they are not discoverable and the project's commit messages are terse.
+- Keep everything in `docs/architecture.md`: it describes the structure well, but rationale mixed into an overview gets overwritten and lost.
+- Keep superseded ADRs as history: standard practice, but a log full of descriptions of deleted code misleads readers; git already keeps the history.
+- Rely on commit messages and PR descriptions: not discoverable.
 
 ## Consequences
 
-- Small ongoing cost: one short file per significant decision.
-- The `docs/*.md` files stay the explanatory overview. ADRs are the log of decisions.
-- Retrospective "alternatives considered" sections reflect evident trade-offs, not a transcript of earlier discussion. Confirm with the original authors when it matters.
+- A small ongoing cost: keeping the ADRs in step with the code.
+- `docs/architecture.md`, `reliability.md`, `scalability.md` and `worker-and-scheduler.md` are the explanatory overview; the ADRs are the decision log.
+- "Alternatives considered" in ADRs written after the fact (0004 to 0016) reflect evident trade-offs, not a record of earlier discussions.
 
 ## References
 

@@ -1,11 +1,11 @@
 # 0020. Shared API key authentication, and private internal services
 
 - Status: Accepted
-- Date: 2026-10-10
+- Date: 2026-10-10 (updated the same day for the four-service stack)
 
 ## Context
 
-The API had no authentication at all (audit F-03). Anyone who could reach port 8000, or port 3000 where nginx proxied every `/api/*` path, could create and run workflows, cancel instances, trigger recovery, read `/metrics`, and read stored connection credentials in plaintext. Webhook endpoints failed open when their secret was empty (F-04, ADR 0009). RabbitMQ (guest/guest), Redis (no password) and, in the dev override, adminer were published on every host interface (F-12). The project owner chose, on 2026-10-10, a shared API key as the first step, over nginx basic auth or per-user logins.
+The API had no authentication at all (audit F-03). Anyone who could reach port 8000, or port 3000 where nginx proxied every `/api/*` path, could create and run workflows, cancel instances, read `/metrics`, and read stored connection credentials in plaintext. Webhook endpoints failed open when their secret was empty (ADR 0009). The database and its neighbours were published on host ports with default credentials. The project owner chose a shared API key as the first step, over nginx basic auth or per-user logins.
 
 ## Decision
 
@@ -18,11 +18,11 @@ The API had no authentication at all (audit F-03). Anyone who could reach port 8
 
 **UI.** The React app shows a key prompt before anything else (`ApiKeyGate`). It verifies the key against the API before accepting it, keeps it in `sessionStorage` (gone when the tab closes, never in `localStorage`), sends it with every request, and returns to the prompt on any 401 or on "Sign out".
 
-**nginx.** The UI proxy exposes only what the UI uses. `/api/admin`, `/api/metrics`, `/api/triggers` and `/api/webhooks` return 404 through it (webhooks belong on the API port). It adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a Content-Security-Policy, forwards `X-Forwarded-*`, and resolves the API at request time so a recreated container is picked up.
+**nginx.** The UI proxy exposes only what the UI uses. `/api/metrics`, `/api/triggers` and `/api/webhooks` return 404 through it (webhooks belong on the API port). It adds `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a Content-Security-Policy, forwards `X-Forwarded-*`, and resolves the API at request time so a recreated container is picked up.
 
-**Compose.** RabbitMQ, Redis and PostgreSQL are not published. RabbitMQ and Redis require passwords. Every secret comes from `.env`, and Compose refuses to start with an empty one, with a message pointing at `scripts/init-env.sh`, which writes `.env` with random values and prints the API key. The API and UI bind to `127.0.0.1` unless `BIND_ADDRESS` says otherwise. Adminer moved behind the `dev-tools` profile and binds to localhost; the dev override publishes the RabbitMQ management UI on localhost only. Services wait for Postgres, restart unless stopped, and the API has a health check. Celery no longer stores task results in a hardcoded unauthenticated Redis (nothing reads them), which also lets Redis have a password.
+**Compose.** PostgreSQL is not published to the host. Every secret comes from `.env`, and Compose refuses to start with an empty one, with a message pointing at `scripts/init-env.sh`, which writes `.env` with random values (API key and database password) and prints the API key. The API and UI bind to `127.0.0.1` unless `BIND_ADDRESS` says otherwise. Adminer is behind the `dev-tools` profile and binds to localhost. Services wait for Postgres and restart unless stopped, and the API and worker have health checks.
 
-**Checks.** `scripts/smoke.sh` asserts all of this against a running stack: 401 without or with a wrong key, unsigned webhooks rejected, admin and metrics not reachable through the UI, the broker, cache and database ports closed, a workflow that calls the internal RabbitMQ admin API fails as blocked (ADR 0021), and the seeded workflow still completes.
+**Checks.** `scripts/smoke.sh` asserts all of this against a running stack: 401 without or with a wrong key, unsigned webhooks rejected, the webhook and metrics paths not reachable through the UI proxy, the database port closed, a workflow that calls the internal API service fails as blocked (ADR 0021), and the seeded workflow still completes.
 
 ## Alternatives considered
 
@@ -34,7 +34,7 @@ The API had no authentication at all (audit F-03). Anyone who could reach port 8
 
 Positive:
 
-- Closes unauthenticated access to every state-changing, secret-returning and operational route (F-03), and the public exposure of the broker, cache and admin tools (F-12, F-25).
+- No unauthenticated access to any state-changing, secret-returning or operational route, and no public exposure of the database or admin tools.
 - Fails closed at start-up and at request time, and a new route cannot be added without auth unnoticed.
 - A fresh clone is safe by default: no shared default passwords exist.
 
@@ -44,12 +44,12 @@ Negative / follow-up:
 - The key is held in browser JavaScript for the session, so an XSS bug would expose it; the CSP and the absence of raw HTML injection reduce that risk.
 - No rate limiting or lockout on key guesses; the 24-byte random key makes guessing impractical, but the endpoint should sit behind TLS and, ideally, a rate limiter.
 - Plain HTTP between the browser and nginx: use TLS in front for anything beyond localhost.
-- Connection credentials are still stored in plaintext and returned by `GET /connections/{id}` to anyone with the key; masking and encryption at rest remain open (ADR 0011).
-- Pre-existing deployments must run `scripts/init-env.sh` (or add the new variables) before upgrading. Redis and RabbitMQ credentials change, so existing volumes keep working only if those services are recreated with the new passwords.
+- Connection credentials are still stored in plaintext and returned by `GET /connections/{id}` to anyone with the key (ADR 0011).
+- Upgrading an existing install needs the new variables (`sh scripts/init-env.sh`); the old `RABBITMQ_*` and `REDIS_*` settings are no longer used.
 
 ## References
 
 - `src/api/auth.py`, `src/api/main.py`, `tests/unit/test_api_auth.py`
 - `frontend/src/auth.ts`, `frontend/src/api.ts`, `frontend/src/components/ApiKeyGate.tsx`, `frontend/tests/`
 - `docker-compose.yml`, `docker-compose.override.yml`, `frontend/nginx.conf`, `.env.example`, `scripts/init-env.sh`, `scripts/smoke.sh`
-- `docs/audit-2026-10-07.md` (F-03, F-12, F-25), ADR 0009, ADR 0011, ADR 0021
+- Related: ADR 0009, ADR 0011, ADR 0021

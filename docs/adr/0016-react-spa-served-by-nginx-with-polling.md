@@ -1,7 +1,7 @@
 # 0016. React single-page app served by nginx, with polling for live status
 
-- Status: Accepted - under review (known gaps: F-24 to F-31)
-- Date: 2026-10-07 (recorded retrospectively)
+- Status: Accepted - under review (known gaps listed below)
+- Date: 2026-10-07 (recorded after the fact; updated 2026-10-10)
 
 ## Context
 
@@ -11,9 +11,12 @@ Non-developers need to build, run and monitor workflows, manage connections and 
 
 - Stack: React 19, TypeScript (strict), Vite 7, Tailwind CSS 4, react-router 7 in declarative mode (`BrowserRouter`), `dagre` for graph layout. Source in `frontend/src`.
 - State and data: local component state only; a thin `fetch` wrapper in `src/api.ts` with the base path `/api` fixed in code; three small hooks (`usePolling`, `useConnectors`, `useConnections`). No store and no data-fetching library.
+- Authentication: `ApiKeyGate` asks for the API key before showing anything, verifies it against the API, keeps it in `sessionStorage` only, and returns to the prompt on any 401 or on "Sign out" (ADR 0020). `api.ts` sends it as a bearer token on every request.
 - Live status: the instances list and instance detail poll the API every few seconds (`usePolling`, default 5 s) and stop once an instance is terminal.
-- Workflow builder: a four-step wizard (inputs, trigger, steps, review) that edits a draft and converts it to and from the JSON definition. Action and trigger forms are generated from the connector catalogue returned by `GET /connectors` (`SchemaForm`). Steps are an ordered list linked by "next" selects, with branch targets. `WorkflowGraph` is a read-only SVG preview.
-- Delivery: a multi-stage Docker build (`npm ci`, `npm run build`) served by `nginx:alpine`. nginx serves the static bundle with SPA fallback and reverse-proxies `/api/` to `http://api:8000/`, so the browser talks to one origin.
+- Instance detail shows one row per step attempt (`attempt N` for retries), the error text of a failed attempt, and the data a step changed. There is no input snapshot.
+- Workflow builder: a four-step wizard (inputs, trigger, steps, review) that edits a draft and converts it to and from the JSON definition. Action and trigger forms are generated from the connector catalogue returned by `GET /connectors` (`SchemaForm`). Steps are an ordered list linked by "next" selects, with branch targets. `WorkflowGraph` is a read-only SVG preview laid out by `src/lib/graph-layout.ts`.
+- Delivery: a multi-stage Docker build (`npm ci`, `npm run build`) served by `nginx:alpine`. nginx serves the bundle with SPA fallback and reverse-proxies `/api/` to the API, resolving it at request time. `/api/metrics`, `/api/triggers` and `/api/webhooks` return 404 through it. It sets `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` and a Content-Security-Policy.
+- Tests: `npm test` runs Node's built-in runner over `frontend/tests/` (key storage and request handling); `npm run lint` and `npm run build` complete the checks.
 
 ## Alternatives considered
 
@@ -28,19 +31,17 @@ Positive:
 
 - Simple deployment: static files and one proxy rule; same-origin calls avoid CORS in production.
 - Connector-driven forms mean new connectors usually need no frontend change.
-- Strict TypeScript, no `dangerouslySetInnerHTML`, no browser storage of secrets.
+- Strict TypeScript, no `dangerouslySetInnerHTML`; the API key is not in `localStorage`.
 
-Negative / known gaps (details in the audit):
+Negative / known gaps:
 
-- A clean clone could not build: `WorkflowGraph.tsx` imports `../lib/graph-layout`, which was never committed because the root `.gitignore` rule `lib/` also matched `frontend/src/lib/` (F-24). Fixed on 2026-10-10: the module was rewritten and the ignore rule anchored.
-- The proxy used to forward every `/api/*` path with no authentication layer (F-03, F-25). Fixed on 2026-10-10: the UI asks for an API key, sends it with every request, and nginx no longer exposes admin, metrics, trigger or webhook paths (ADR 0020).
-- Error handling in `api.ts` ignores `validation_errors` and non-string `detail`, so users see generic messages or `[object Object]` (F-26). Polling has no stale-response guard and a single failed poll replaces the page with an error (F-27).
-- The builder has no client-side validation, edits `next` links without keeping them consistent when steps are reordered, and loses focus while renaming steps (F-28). Inline credentials remain in definitions when a connection is selected (F-19).
-- There are no frontend tests, no ErrorBoundary and almost no accessibility attributes (F-29). `npm audit` reports vulnerable dependencies (F-30). nginx sends no security headers (F-25).
-- The README advertises a drag-and-drop builder; none exists (F-22).
+- Error handling in `api.ts` ignores `validation_errors` and non-string `detail`, so users see generic messages or `[object Object]`. Polling has no stale-response guard and a single failed poll replaces the page with an error.
+- The builder has no client-side validation, edits `next` links without keeping them consistent when steps are reordered, and loses focus while renaming steps. Inline credentials remain in definitions when a connection is selected.
+- There is no ErrorBoundary and almost no accessibility attributes. Component behaviour is covered only by the lint and build, not by tests. `npm audit` reports vulnerable dependencies.
+- nginx runs as root. The API key is held in browser JavaScript for the session, so an XSS bug would expose it.
+- The README used to advertise a drag-and-drop builder; none exists, and the README no longer says so.
 
 ## References
 
-- `frontend/` (`src/api.ts`, `src/hooks/usePolling.ts`, `src/components/builder/`, `nginx.conf`, `Dockerfile`)
-- `docs/image.png`
-- Related: ADR 0011, ADR 0015
+- `frontend/` (`src/api.ts`, `src/auth.ts`, `src/components/ApiKeyGate.tsx`, `src/hooks/usePolling.ts`, `src/lib/graph-layout.ts`, `src/components/builder/`, `nginx.conf`, `Dockerfile`, `tests/`)
+- Related: ADR 0011, ADR 0015, ADR 0020

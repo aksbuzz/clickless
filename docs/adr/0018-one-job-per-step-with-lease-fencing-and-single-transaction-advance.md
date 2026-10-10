@@ -1,66 +1,64 @@
 # 0018. One job per step, with lease fencing and a single-transaction advance
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-10
-- If accepted, supersedes the event model and the Redis lock in ADR 0005, and the step-idempotency part of ADR 0006. Depends on ADR 0017.
+- Depends on: ADR 0017
 
 ## Context
 
-Today a step is spread over two queues and three event types. The engine receives `STEP_COMPLETE`, the worker receives the action, the worker writes a result event, and the engine guards against duplicates and stale events with a Redis lock plus checks on status and step name (ADR 0005). The worker holds a database transaction open for the whole handler call, and its duplicate check reads a status that only the engine sets later (ADR 0006, F-16). Cancel writes without the lock (F-17). Several failure paths leave the instance `running` forever (F-08).
-
-Workflows in this product are sequential: there is no fan-out, so an instance has at most one step in flight.
+Workflows here are sequential: an instance has at most one step in flight. The old runtime spread a step over two queues and three event types, guarded duplicates with a Redis lock and status checks, held a database transaction across the whole handler call, and left several failure paths with the instance stuck in `running` forever. It needed an execution model with one mechanism for ordering, crashes and duplicates.
 
 ## Decision
 
-Run each step as one job, and advance the instance in the same transaction that records the step's result. Implemented in `spikes/pg-queue/pg_engine.py`.
+Run each step as one job and advance the instance in the same transaction that records the step's result (`src/engine/runtime.py`).
 
-For a claimed job:
+For a claimed job (`StepRunner.run_one`):
 
-1. **Begin (short transaction).** Lock the instance row (`FOR UPDATE`). If the instance is terminal, finish the job and stop. Mark any execution left `running` by a dead worker as failed. Insert a `running` step execution for this attempt. Load the connection config. Commit.
-2. **Run the handler with no transaction open.** Templates are resolved once, centrally, before the handler runs, for every connector (fixes F-09 without touching each handler).
-3. **Finish (one transaction).** Lock the instance, then lock the job and check the lease is still ours (`status = 'running' AND locked_by = me`). If not, discard the result. If the instance was cancelled or moved on, mark the execution discarded and finish the job. Otherwise:
-   - success: store only the keys the step changed as the execution's `output_data`, apply changes and removals to the instance data, finish the job, and advance;
-   - failure: if attempts remain under the step's retry policy, requeue the job with `run_at = now + delay_seconds` and reset its claim count; otherwise mark the job `dead` and the instance `failed` with the error.
+1. **Claim** (`claim_job`): take the next due job and set the lease. A job already claimed `JOB_MAX_CLAIMS` times is marked `dead` and its instance failed.
+2. **Begin** (`begin_step`, short transaction): lock the instance row (`FOR UPDATE`). If the instance is terminal, delete the job and stop. Close any attempt a dead worker left `running`. Insert a `running` execution row for this attempt. Load the step's connection credentials. A step that needs no handler (a branch, a delay, `end`, arming a `wait_for_event`) is finished here.
+3. **Run** (`execute_step`, no transaction open): resolve `{{templates}}` once for every handler (keys a handler lists in `untemplated_keys` are left as written), call the handler on a copy of the data, and turn any failure, including an unknown action or an exception, into a failed outcome with a reason.
+4. **Finish** (`finish_step`, one transaction): lock the instance, then lock the job and check the lease is still ours (`status = 'running' AND locked_by = me`); if not, discard the result. If the instance was cancelled or moved on, mark the attempt discarded and delete the job. On success store only the keys the step changed as `output_data`, apply the change and any removals to the instance data, delete the job, and advance. On failure, requeue the job after `retry.delay_seconds` while `retry.max_attempts` allows, otherwise mark the job `dead` and the instance `failed` with the error text.
 
-Advancing (`_advance_to`) resolves control steps inline, in the same transaction: `branch` evaluates and continues, `delay` adds its duration to the next job's `run_at`, `end` completes the instance (or enqueues `end` at the delayed time). The first action or `wait_for_event` step becomes a job. More than 100 inline hops fails the instance, which catches branch/delay cycles.
+Advancing (`_advance_to`) resolves control steps inside the transaction: `branch` evaluates its condition, `delay` adds its duration to the next job's `run_at`, `end` completes the instance. The first action or `wait_for_event` step becomes a job. More than 100 control steps in a row fails the instance (cycle guard).
 
-`wait_for_event`: the job arms the wait (a `running` execution) and enqueues a `wait_timeout` job at `run_at = now + timeout_seconds`. `send_event` locks the instance, completes the wait, cancels the timeout job and advances. The timeout job fails the instance only if the wait is still open.
+`wait_for_event`: the job arms the wait (a `running` execution) and, with `timeout_seconds`, queues a `wait_timeout` job. `send_event` locks the instance, completes the wait, deletes the timeout job and advances. The timeout job fails the instance only if the wait is still open.
 
-`cancel_instance` and `send_event` take the same instance row lock as the worker, so they serialise with step completion without any external lock.
+`cancel_instance` and `send_event` take the same instance lock as `begin_step` and `finish_step`, so they serialise with a step finishing without any external lock.
 
-Every non-success path ends in a terminal state or a scheduled retry: a missing handler, an undefined next step, a missing connection, exhausted retries, a worker that keeps dying, and a wait timeout all produce a `failed` instance with an error recorded on a step execution.
+**Notifications.** A finishing worker claims the next job itself, so it sends no `NOTIFY`. Notifications are sent when someone else must be woken: an API start, an event, or a job queued for later (delay, retry, wait timeout). A `NOTIFY` on every enqueue made every committing transaction wait on PostgreSQL's global notify lock, which capped the whole system near 80 steps per second.
+
+**Concurrency.** One worker process runs `WORKER_CONCURRENCY` runner threads sharing a small connection pool, plus a dispatcher thread holding one `LISTEN` connection and sleeping until the next job is due (`src/engine/worker.py`, `docs/worker-and-scheduler.md`).
+
+Every non-success path ends in a terminal state or a scheduled retry: missing handler, undefined next step, missing connection, exhausted retries, a worker that keeps dying, a wait timeout, and an engine error (the job is released and retried after 10 s).
 
 ## Alternatives considered
 
-- Keep orchestrator events (`START_WORKFLOW`, `STEP_COMPLETE`, `STEP_FAILED`) but move them onto the `jobs` table. Fewer changes, but keeps two job types per action step and the guards that exist only to tolerate that design.
-- Optimistic concurrency with a version column on the instance instead of a row lock.
-- Keep the Redis lock for the engine.
-- Hold one transaction across the handler (simplest to reason about, but ties up a connection and locks for up to the handler timeout).
+- Keep orchestrator events (`START_WORKFLOW`, `STEP_COMPLETE`, `STEP_FAILED`) on the `jobs` table: fewer changes, but two job types per action and the guards that exist only to tolerate that design.
+- Optimistic concurrency with a version column instead of a row lock.
+- Hold one transaction across the handler: simplest, but ties up a connection and locks for the handler's duration.
+- Resolve templates inside each handler (what the code did): easy to forget, and a second resolution would let a value containing `{{...}}` be resolved again.
 
 ## Consequences
 
 Positive:
 
-- No external lock and no stale-event guards: the row lock plus the lease fence cover cancel races (F-17), duplicate completions and zombie workers.
-- No transaction is held during a handler call, so pool pressure no longer depends on handler duration (F-14, F-16).
-- A crashed or hung worker's job is retried by lease expiry; its late result cannot corrupt state.
-- Unknown actions, dangling `next`, missing connections and similar errors fail the instance with a visible reason instead of stranding it (F-08, partly F-10).
-- Step executions become one row per attempt, and `output_data` holds a delta instead of the whole instance data, ending quadratic growth (F-19, partly).
+- No external lock and no stale-event guards: the row lock plus the lease fence cover cancel races, duplicate completions and stalled workers.
+- No transaction is held during a handler, so connections are not tied to slow external calls and one pool serves many threads.
+- A crashed or hung worker's job is retried by lease expiry, and its late result cannot corrupt state.
+- Failures are always visible, with their reason, to the user (the step error text is stored and shown in the UI).
+- Step executions are one row per attempt and store only what the step changed.
 
 Negative / open points:
 
-- **Side effects remain at-least-once.** Fencing protects database state, not the outside world: if a lease expires while a handler is still running, another worker runs the handler again. In the test for this, the handler ran twice and the following step ran once. Provider idempotency keys are still needed for non-idempotent actions.
-- No lease heartbeat in the spike, so the lease must exceed the longest handler. A hung handler occupies its worker thread until the process restarts, as it does with Celery today.
-- Inline limits only cover branch and delay cycles. A loop through action steps has no budget yet; a per-instance step cap is still needed, with definition validation (F-10).
-- Only sequential workflows are supported by the one-live-job invariant. Adding parallel branches later needs per-branch state, though the instance row lock still serialises writes.
-- Not covered by the spike: the HTTP layer, request-id propagation, metrics, purge of finished jobs, authentication, and the frontend. Step rows are now per attempt and `input_data` is empty; the UI has not been checked for this. The Python, SQL and HTTP handler security issues (F-02, F-05, F-06) are unchanged by this ADR.
-
-## Evidence
-
-`spikes/pg-queue/test_spike.py` (20 tests, all passing against PostgreSQL 17): seed workflow with real handlers; delta-only step output; central template resolution; unknown action, dangling `next`, missing connection and branch cycle all fail the instance; retry then success and retry exhaustion; delay as a future `run_at`; wait/event and wait timeout; crash recovery by lease expiry; stale worker result discarded with the handler running twice and state advancing once; poison job marked dead; cancel during a running step discards its result; 300 instances over 4 workers with each step completed exactly once.
+- **Side effects remain at-least-once.** Fencing protects database state, not the outside world: if a lease expires during a handler, another worker runs it again.
+- **No lease heartbeat**, so the lease (`JOB_LEASE_SECONDS`, default 300 s) must exceed the slowest step. A hung handler holds a thread until its own timeout; threads cannot be killed.
+- The cycle guard covers branch and delay steps only. A loop through action steps has no per-instance step cap yet, and definitions are not fully validated when saved.
+- Only sequential workflows are supported: one live job per instance. Parallel branches would need per-branch state; the instance row lock would still serialise writes.
+- Handlers must be stateless and thread-safe (they are called concurrently).
 
 ## References
 
-- `spikes/pg-queue/pg_engine.py`, `spikes/pg-queue/test_spike.py`
-- `docs/audit-2026-10-07.md` (F-08, F-09, F-10, F-14, F-16, F-17, F-19)
-- ADR 0005, ADR 0006, ADR 0017
+- `src/engine/runtime.py`, `src/engine/steps.py`, `src/engine/worker.py`
+- `tests/integration/test_engine.py`, `tests/integration/test_worker.py`, `tests/unit/test_engine_steps.py`, `tests/unit/test_execute_step.py`
+- `docs/reliability.md`, `docs/worker-and-scheduler.md`
+- ADR 0017

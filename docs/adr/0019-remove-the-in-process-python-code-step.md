@@ -2,11 +2,11 @@
 
 - Status: Accepted
 - Date: 2026-10-10
-- Supersedes: ADR 0010
+- Replaced an earlier decision to run user code in the worker (its ADR was deleted with the code)
 
 ## Context
 
-ADR 0010 recorded the `python_execute` action, which ran user code with `exec` inside the action worker behind a builtins blacklist and an import allowlist. The audit (F-02) showed this is not a security boundary: running the real handler with a harmless probe confirmed the allowlist can be bypassed, so anyone who can create a workflow can run arbitrary code in a process that holds the database, broker and cache credentials. The timeout also cannot stop runaway code. Until the API had authentication (ADR 0020) that meant unauthenticated remote code execution.
+Workflows had a `python_execute` action that ran user code with `exec` inside the action worker, behind a builtins blacklist and an import allowlist. The audit (F-02) showed this is not a security boundary: running the real handler with a harmless probe confirmed the allowlist can be bypassed, so anyone who can create a workflow can run arbitrary code in a process that holds the database credentials and every stored connection credential. The timeout also cannot stop runaway code. Until the API had authentication (ADR 0020) that meant unauthenticated remote code execution.
 
 Options were put to the project owner on 2026-10-10: disable it behind a flag, remove it, or keep it for now. The decision was to remove it.
 
@@ -34,7 +34,7 @@ Positive:
 Negative / follow-up:
 
 - Workflows can no longer compute values with code. The remaining tools are `branch` conditions (`eq neq gt gte lt lte contains exists`) and `transform_data` (set and remove fields). If computed values are needed, add an expression language in a new ADR.
-- **Existing databases.** `init.sql` only runs on an empty volume, so a database created earlier still has the old seed workflow, and any user workflow may use `python_execute`. New saves are rejected by `validate_definition` (unknown action id), but stored versions are not touched and will fail at run time with "no handler" (the current engine can leave such an instance stuck, F-08). Find them with:
+- **Existing databases.** `init.sql` only runs on an empty volume, so a database created earlier still has the old seed workflow, and any user workflow may use `python_execute`. New saves are rejected by `validate_definition` (unknown action id), but stored versions are not touched and will fail at run time: the step is recorded as failed with "no handler registered for action 'python_execute'" and the instance ends as `failed`. Find them with:
 
   ```sql
   SELECT w.name, v.version
@@ -48,4 +48,4 @@ Negative / follow-up:
 ## References
 
 - `docs/audit-2026-10-07.md` (F-02)
-- ADR 0010 (superseded), ADR 0008
+- ADR 0008, ADR 0020

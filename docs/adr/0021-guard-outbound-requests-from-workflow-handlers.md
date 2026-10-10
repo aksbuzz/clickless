@@ -5,7 +5,7 @@
 
 ## Context
 
-Workflow authors choose where handlers connect: the URL of `http_request` and `send_webhook`, the Slack `webhook_url`, and the PostgreSQL `connection_string`. The worker runs inside the Docker network, so those destinations could be RabbitMQ's management port, Redis, the platform's own Postgres, or a cloud metadata address such as `169.254.169.254`. `http_request` also stored the full response body in the instance data, which the API serves, making server-side request forgery a way to read internal services (audit F-06).
+Workflow authors choose where handlers connect: the URL of `http_request` and `send_webhook`, the Slack `webhook_url`, and the PostgreSQL `connection_string`. The worker runs inside the Docker network, so those destinations could be the platform's own Postgres or API, other internal services, or a cloud metadata address such as `169.254.169.254`. `http_request` also stored the full response body in the instance data, which the API serves, making server-side request forgery a way to read internal services (audit F-06).
 
 ## Decision
 
@@ -29,7 +29,7 @@ A blocked request fails the step with a message that names the reason (for examp
 
 Positive:
 
-- Closes the practical SSRF paths to the broker, cache, database and metadata service (F-06).
+- Closes the practical SSRF paths to the platform's own database and API, other internal services, and the cloud metadata service.
 - Responses can no longer exhaust worker memory.
 - The reason for a refusal is visible in the step's error.
 

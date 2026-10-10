@@ -1,127 +1,81 @@
 # Reliability: At-Least-Once Execution
 
-## The Problem
+## The promise
 
-Distributed systems can fail at any point:
-- The API server crashes after creating an instance but before sending a message to RabbitMQ.
-- A worker dies mid-execution.
-- RabbitMQ loses a message before the consumer ACKs it.
-- The database is temporarily unreachable.
+Every workflow that was accepted will run to a visible end (`completed`, `failed` or `cancelled`), and each step's result changes the instance's state **exactly once**, even when workers crash, hang or are restarted. A step's *side effects* (a Slack message, an HTTP call) can repeat after a crash, because no system can make an external call and a database commit atomic. That makes execution **at-least-once**.
 
-For a workflow system, a lost job is worse than a duplicate job (which can be made safe with idempotency). The system is designed to guarantee **at-least-once execution**: every scheduled job will eventually run, even in the face of partial failures.
+For a workflow engine a lost job is worse than a repeated one, which can be made safe with idempotency keys.
 
 ---
 
-## Guarantee 1: Transactional Outbox
+## How it works
 
-**The core invariant:** a workflow instance and its dispatch message are always created together atomically, or not at all.
+All state, including the queue, is in one PostgreSQL database, so the guarantees come from transactions and from one mechanism for crashes.
 
-```python
-# src/api/service.py — trigger handling
-with db.transaction():
-    instance_id = repo.create_instance(workflow_version_id, trigger_data)
-    repo.schedule_outbox_message(
-        destination="orchestration_queue",
-        payload={"type": "START_WORKFLOW", "instance_id": instance_id},
-        publish_at=None,  # immediately
-    )
-```
+### 1. Starting is atomic
 
-If the server crashes after the `INSERT workflow_instances` but before the `INSERT outbox`, the transaction rolls back and neither row exists — no zombie instance with no dispatch message.
+`start_instance` inserts the instance and its first job in one transaction. A crash before the commit leaves nothing; a crash after leaves a queued job. There is no window in which an instance exists with nothing scheduled.
 
-If the server crashes after both inserts but before the relay sends the message, the outbox row remains `processed_at IS NULL` and the relay will pick it up on the next poll.
+### 2. Finishing a step is atomic
 
-**This is the single most important reliability mechanism in the system.**
+The step's result, the instance's new state and the next job are written in a single transaction (`finish_step`). A worker cannot save a result and forget to schedule what follows. Branches and delays are resolved inside the same transaction, so there is no half-advanced state to recover from.
 
----
+### 3. Leases replace acknowledgements and sweepers
 
-## Guarantee 2: Late ACK in Celery
+A worker takes a job by setting `locked_until` (default 300 s, `JOB_LEASE_SECONDS`). If the worker dies, the lease expires and the next worker's claim query picks the job up again. The same query serves new jobs, delayed jobs, retries and abandoned jobs. There is no separate recovery process.
 
-RabbitMQ delivers a message to a Celery worker. By default Celery ACKs the message when it is received. With `task_ack_late = True` (configured in `src/shared/celery_app.py`), the ACK is sent only after the task function returns successfully.
+### 4. Fencing keeps a stale worker harmless
 
-```
-Worker receives message from RabbitMQ
-  │
-  ├─ [task_ack_early = True (default)]
-  │   ACK sent immediately → message deleted from queue
-  │   Worker crashes → message is LOST
-  │
-  └─ [task_ack_late = True (current config)]
-      ACK sent after task completes → message stays in queue until done
-      Worker crashes → RabbitMQ re-delivers to another worker ✓
-```
+A worker that is slow, not dead (a handler that outlives its lease) will eventually try to save its result. `finish_step` locks the instance row and checks the job is still `running` and still locked **by this worker**. If another worker has taken the job, the late result is discarded and nothing changes. The handler may have run twice, but the instance advances once.
 
-Combined with `task_reject_on_worker_lost = True`, if a worker process dies unexpectedly, its unACKed messages are immediately returned to the queue rather than waiting for a timeout.
+### 5. Writers that are not workers use the same lock
+
+Cancel and resume lock the instance row like a step does, so they queue behind a step that is finishing instead of racing it. A cancelled instance's in-flight step discards its result when it finishes.
+
+### 6. Every failure ends visibly
+
+| Situation | What happens |
+|---|---|
+| Handler returns a failure or raises | The attempt is recorded with the error text. If the step's `retry.max_attempts` allows, the same job is re-queued after `delay_seconds`; otherwise the job is marked `dead` and the instance `failed`. |
+| Action id with no handler | Instance fails: `no handler registered for action '...'`. |
+| `next` or branch target that does not exist | Instance fails: `step '...' is not defined`. |
+| Branch or delay cycle | After 100 control steps in a row the instance fails. |
+| Connection credential not found | Step fails before the handler runs. |
+| `wait_for_event` times out | Instance fails: `wait step '...' timed out`. |
+| Engine error (database hiccup) while processing a job | The job is released and retried after 10 s. |
+| A step that keeps killing its worker | After `JOB_MAX_CLAIMS` (5) claims without finishing, the job is marked `dead` and the instance `failed`. |
+
+Dead jobs stay in the `jobs` table for inspection (`SELECT ... FROM jobs WHERE status = 'dead'`) and are counted in `GET /health`.
 
 ---
 
-## Guarantee 3: Idempotent Action Execution
+## Failure scenarios
 
-Because the system uses at-least-once delivery (not exactly-once), any step could be executed more than once. The worker guards against this with an idempotency check:
-
-```python
-# src/worker/service.py
-existing = repo.get_step_execution(instance_id, step_name)
-if existing and existing.status == "completed":
-    logger.info("step already completed, skipping", ...)
-    return  # Do nothing — result already in instance.data
-```
-
-`workflow_step_executions` acts as a deduplication log. If a retry delivers the same action twice, the second execution is a no-op.
-
-**Limitation:** handlers that call external APIs (Slack, GitHub) are not inherently idempotent — a duplicate execution could send two Slack messages. Fully idempotent external calls require:
-- Idempotency keys on API calls where the external service supports them.
-- Storing the result of the first call and returning it on duplicates.
-
-This is the boundary of what the framework can guarantee; connector implementors must design handlers to be safe under re-delivery.
+| Failure | What happens |
+|---|---|
+| API crashes before committing a start | Nothing was created; the caller got no instance id and can retry. |
+| API crashes after committing | The job is queued; a worker runs it. |
+| Worker crashes mid-step | Its lease expires; another worker claims the job. The handler may run again. |
+| Worker is slow past its lease | Another worker takes over. When the slow one finishes, its result is discarded. |
+| Worker is stopped (`SIGTERM`, `docker stop`) | It stops claiming, lets steps in flight finish (the compose grace period is 45 s), then exits. Anything cut short is recovered by lease expiry. |
+| PostgreSQL restarts or is briefly unreachable | Workers log the error and retry every second; the dispatcher reconnects. No state is lost because none was held outside the database. |
+| No worker is running | Jobs wait; `GET /health` turns unhealthy once a due job is older than `HEALTH_MAX_JOB_AGE_SECONDS` (30). |
+| Handler hangs | It holds one thread until the call's own timeout. Threads cannot be killed, so a handler without a timeout can occupy a thread until the process restarts; the lease still lets another worker re-run the step. |
 
 ---
 
-## Guarantee 4: Celery Automatic Retries
+## What at-least-once does NOT mean
 
-Transient failures (network timeouts, database connection drops) are retried automatically by Celery up to 3 times with exponential backoff before the message is routed to the DLQ.
-
-User-defined retry logic (`"retry": {"max_attempts": 3, "delay_seconds": 5}` in the workflow definition) operates at a higher level — it retries the entire step via the outbox, not the Celery task itself.
-
----
-
-## Guarantee 5: Stuck Instance Recovery
-
-The `engine.recover_stuck` Celery Beat task runs every 30 seconds:
-
-```python
-# src/orchestration/entrypoint/celery_task.py
-@app.task(name="engine.recover_stuck")
-def recover_stuck():
-    # Find instances in status=running with no activity for > threshold
-    # Re-enqueue a START or STEP event
-    ...
-```
-
-This catches edge cases where:
-- The relay relayed the message but the engine worker crashed before processing it.
-- A Redis lock expired without being released, and the event was dropped.
-- The orchestration event was ACKed but the outbox write at the end failed.
-
-The sweeper provides a safety net with a bounded detection latency of 30 seconds.
+- **Not exactly-once side effects.** After a crash or a lease expiry a handler can run again, so Slack, GitHub, Trello, HTTP and SQL-execute steps can repeat. Use idempotency keys where the provider supports them, and write SQL so a repeat is harmless.
+- **No heartbeat.** A step that legitimately runs longer than `JOB_LEASE_SECONDS` is run again by another worker. Set the lease above your slowest step.
+- **Webhook deliveries are not de-duplicated.** GitHub redeliveries and Slack retries each start a new instance.
+- **Durability follows PostgreSQL.** With the default `synchronous_commit` a committed start is on disk. Everything is in this one database, so back it up (`pg_dump`, or WAL archiving for point-in-time recovery). Losing the volume loses all workflows and history.
+- **No retention policy yet.** Finished jobs are deleted, but `workflow_instances` and `workflow_step_executions` grow without bound.
 
 ---
 
-## Failure Scenarios
+## Operating it
 
-| Failure | Detection | Recovery |
-|---|---|---|
-| API crashes before outbox write | Transaction rollback | No orphan instance; trigger webhook re-fires or user retries |
-| Relay crashes before sending to RabbitMQ | `processed_at IS NULL` | Next relay poll picks it up |
-| Engine worker crashes mid-task | `task_ack_late` + RabbitMQ re-delivery | Task re-executed on another worker |
-| Engine writes state but crashes before outbox | Stuck instance | Recovery sweeper re-enqueues within 30s |
-| Action worker crashes mid-task | `task_ack_late` + RabbitMQ re-delivery | Action retried; idempotency check prevents double execution |
-| Redis lock expires during processing | N/A | Next event delivery succeeds (lock gone); state machine guards against stale events |
-
----
-
-## What At-Least-Once Does NOT Mean
-
-- **Not exactly-once delivery.** The same Celery task may run twice. The idempotency check handles this for actions; orchestration events are idempotent by design (stale-event guards).
-- **Not zero data loss under all conditions.** If PostgreSQL loses committed data (e.g. unplanned `DROP TABLE`), all state is gone. This is mitigated by standard DB backups and replication, not by application code.
-- **Not guaranteed side-effect idempotency for external APIs.** Slack, GitHub, and other external systems are called via their own APIs. Duplicate calls require idempotency keys at the connector level.
+- Watch `GET /health`, the worker's metrics (`workflow_completed_total{status="failed"}`, `step_retry_total`) and the count of `dead` jobs.
+- To rerun a failed instance, start a new one; instances are not resumable after failure.
+- Tests that prove these properties: `tests/integration/test_engine.py` (crash recovery, stale-worker fencing, poison jobs, cancel during a step, retries, timeouts) and `tests/integration/test_worker.py` (parallelism, shutdown).
