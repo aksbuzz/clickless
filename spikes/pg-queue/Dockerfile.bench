@@ -1,0 +1,6 @@
+# One-container "small VM" for the benchmarks: PostgreSQL 17 and Python in the same box, so they share
+# whatever CPU the container is given (use --cpuset-cpus to pin it to 1, 2, ... cores).
+FROM postgres:17-alpine
+RUN apk add --no-cache python3 py3-pip \
+ && pip install --no-cache-dir --break-system-packages psycopg2-binary structlog httpx fastapi uvicorn
+ENV PYTHONDONTWRITEBYTECODE=1
