@@ -1,7 +1,9 @@
+import json
 import time
 import httpx
 
 from src.shared.logging_config import log
+from src.shared.net_guard import OutboundBlocked, ResponseTooLarge, check_url, read_limited
 
 from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
@@ -47,6 +49,16 @@ class TransformDataHandler:
     return ActionResult(ActionStatus.SUCCESS, data)
 
 
+def _decode_body(content: bytes, content_type: str):
+  text = content.decode("utf-8", errors="replace")
+  if content_type.startswith("application/json"):
+    try:
+      return json.loads(text)
+    except ValueError:
+      return text
+  return text
+
+
 @action("http_request")
 class HttpRequestHandler:
   def execute(self, instance_id, data, config=None, **kwargs):
@@ -59,19 +71,26 @@ class HttpRequestHandler:
 
     if not url:
       return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'url' in config")
+    try:
+      check_url(url)
+    except OutboundBlocked as e:
+      return ActionResult(ActionStatus.FAILURE, data, error_message=f"Blocked outbound request: {e}")
 
     log.info("Sending HTTP request", instance_id=instance_id, method=method, url=url)
     try:
-      response = httpx.request(method, url, headers=headers, json=body, timeout=timeout)
-      data["http_response"] = {
-        "status_code": response.status_code,
-        "body": response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text,
-      }
-      log.info("HTTP response received", instance_id=instance_id, status_code=response.status_code)
-      if response.is_success:
+      with httpx.stream(method, url, headers=headers, json=body, timeout=timeout) as response:
+        content = read_limited(response)
+        status_code = response.status_code
+        content_type = response.headers.get("content-type", "")
+        is_success = response.is_success
+      data["http_response"] = {"status_code": status_code, "body": _decode_body(content, content_type)}
+      log.info("HTTP response received", instance_id=instance_id, status_code=status_code)
+      if is_success:
         return ActionResult(ActionStatus.SUCCESS, data)
       else:
-        return ActionResult(ActionStatus.FAILURE, data, error_message=f"HTTP {response.status_code}")
+        return ActionResult(ActionStatus.FAILURE, data, error_message=f"HTTP {status_code}")
+    except ResponseTooLarge as e:
+      return ActionResult(ActionStatus.FAILURE, data, error_message=f"Response too large: {e}")
     except httpx.TimeoutException:
       return ActionResult(ActionStatus.FAILURE, data, error_message=f"Request timed out after {timeout}s")
     except httpx.RequestError as e:
@@ -88,16 +107,21 @@ class SendWebhookHandler:
 
     if not url:
       return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'url' in config")
+    try:
+      check_url(url)
+    except OutboundBlocked as e:
+      return ActionResult(ActionStatus.FAILURE, data, error_message=f"Blocked outbound request: {e}")
 
     log.info("Sending webhook", instance_id=instance_id, url=url)
     try:
-      response = httpx.post(url, json=data, headers=headers, timeout=timeout)
-      data["webhook_response"] = {"status_code": response.status_code}
-      log.info("Webhook delivered", instance_id=instance_id, status_code=response.status_code)
-      if response.is_success:
+      with httpx.stream("POST", url, json=data, headers=headers, timeout=timeout) as response:
+        status_code, is_success = response.status_code, response.is_success
+      data["webhook_response"] = {"status_code": status_code}
+      log.info("Webhook delivered", instance_id=instance_id, status_code=status_code)
+      if is_success:
         return ActionResult(ActionStatus.SUCCESS, data)
       else:
-        return ActionResult(ActionStatus.FAILURE, data, error_message=f"Webhook returned HTTP {response.status_code}")
+        return ActionResult(ActionStatus.FAILURE, data, error_message=f"Webhook returned HTTP {status_code}")
     except httpx.TimeoutException:
       return ActionResult(ActionStatus.FAILURE, data, error_message=f"Webhook timed out after {timeout}s")
     except httpx.RequestError as e:

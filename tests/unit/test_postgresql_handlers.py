@@ -48,6 +48,7 @@ def db(monkeypatch):
         return RecordingConnection(log)
 
     monkeypatch.setattr("src.worker.handlers.postgresql.psycopg2.connect", connect)
+    monkeypatch.setenv("OUTBOUND_ALLOW_PRIVATE", "true")   # these tests are about templating, not the network guard
     return log
 
 

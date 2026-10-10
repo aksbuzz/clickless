@@ -1,10 +1,25 @@
 import psycopg2
+import psycopg2.extensions
 import psycopg2.extras
 
 from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
+from src.shared.net_guard import OutboundBlocked, check_host
 from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
+
+
+def _guard_dsn(connection_string: str) -> None:
+    """Refuse connection strings that point at internal hosts, or at no host (a local socket)."""
+    try:
+        params = psycopg2.extensions.parse_dsn(connection_string)
+    except psycopg2.ProgrammingError as exc:
+        raise OutboundBlocked("invalid connection string") from exc
+    hosts = [h.strip() for key in ("host", "hostaddr") for h in params.get(key, "").split(",") if h.strip()]
+    if not hosts:
+        raise OutboundBlocked("the connection string must name a host (local socket connections are not allowed)")
+    for host in hosts:
+        check_host(host)
 
 
 def _prepare(config: dict, data: dict) -> dict:
@@ -28,6 +43,11 @@ class PostgresQueryHandler:
             return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'connection_string' in config")
         if not query:
             return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'query' in config")
+
+        try:
+            _guard_dsn(connection_string)
+        except OutboundBlocked as e:
+            return ActionResult(ActionStatus.FAILURE, data, error_message=f"Blocked outbound connection: {e}")
 
         log.info("Executing PostgreSQL query", instance_id=instance_id)
         try:
@@ -60,6 +80,11 @@ class PostgresExecuteHandler:
             return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'connection_string' in config")
         if not query:
             return ActionResult(ActionStatus.FAILURE, data, error_message="Missing 'query' in config")
+
+        try:
+            _guard_dsn(connection_string)
+        except OutboundBlocked as e:
+            return ActionResult(ActionStatus.FAILURE, data, error_message=f"Blocked outbound connection: {e}")
 
         log.info("Executing PostgreSQL statement", instance_id=instance_id)
         try:
