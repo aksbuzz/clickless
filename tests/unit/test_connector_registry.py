@@ -1,5 +1,6 @@
 """Unit tests for connector registry."""
 import pytest
+from src.engine.validation import validate_definition
 from src.shared.connectors.models import Connector, ActionDefinition, TriggerDefinition
 from src.shared.connectors.registry import ConnectorRegistry
 
@@ -108,7 +109,7 @@ class TestConnectorRegistry:
             }
         }
 
-        errors = self.registry.validate_definition(definition)
+        errors = validate_definition(definition, self.registry)
         assert errors == []
 
     def test_validate_definition_missing_action(self):
@@ -144,7 +145,7 @@ class TestConnectorRegistry:
             }
         }
 
-        errors = self.registry.validate_definition(definition)
+        errors = validate_definition(definition, self.registry)
         assert len(errors) > 0
         assert any("unknown action" in err.lower() for err in errors)
 

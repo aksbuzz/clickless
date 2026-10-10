@@ -4,6 +4,7 @@ import pathlib
 import re
 
 import src.shared.connectors.definitions  # noqa: F401 - registers the connectors
+from src.engine.validation import validate_definition
 from src.shared.connectors.registry import registry
 from src.worker.registry import get_registry
 
@@ -28,7 +29,7 @@ def test_python_action_has_no_handler():
 
 
 def test_seed_workflow_only_uses_registered_actions():
-    assert registry.validate_definition(seed_definition()) == []
+    assert validate_definition(seed_definition(), registry) == []
 
 
 def test_seed_workflow_still_branches_on_order_quantity():

@@ -151,6 +151,26 @@ assert any("Blocked outbound" in e and "'postgres'" in e for e in errors), "step
   echo "  ok: a step receives the decrypted credential, and it does not leak into the run"
 }
 
+# A definition with mistakes is refused when it is saved, with every mistake listed, and nothing is stored.
+check_definition_validation() {
+  echo "Workflow definition checks:"
+  name="smoke_invalid_$(date +%s)"
+  definition='{"start_at":"nowhere","steps":{"a":{"type":"action","connector_id":"internal","action_id":"log","config":{},"next":"ghost"},"b":{"type":"branch","condition":{"field":"x","operator":"roughly"},"on_true":"end","on_false":"end"}}}'
+  body="$(curl -s -o /tmp/smoke_validation.json -w '%{http_code}' -X POST "$API/workflows" -H "$AUTH" -H 'Content-Type: application/json' \
+    -d "{\"name\": \"$name\", \"definition\": $definition}")"
+  [ "$body" = "400" ] || fail "an invalid definition was not refused: HTTP $body"
+  "$PY" -c '
+import json, sys
+errors = json.load(open(sys.argv[1]))["validation_errors"]
+text = " | ".join(errors)
+for needle in ("nowhere", "ghost", "roughly"):
+    assert needle in text, "no message about %r in %r" % (needle, errors)
+' /tmp/smoke_validation.json || fail "the refusal did not list every mistake: $(cat /tmp/smoke_validation.json)"
+  case "$(curl -fsS -H "$AUTH" "$API/workflows")" in *"$name"*) fail "the refused workflow was stored" ;; esac
+  rm -f /tmp/smoke_validation.json
+  echo "  ok: an invalid definition is refused with every mistake listed"
+}
+
 # run_case <quantity> <expected priority> <expected shipping_days>
 run_case() {
   quantity="$1"; priority="$2"; days="$3"
@@ -196,6 +216,7 @@ wait_for_health
 check_security
 check_outbound_guard
 check_credentials
+check_definition_validation
 run_case 150 high 1
 run_case 30 normal 5
 echo "SMOKE OK"

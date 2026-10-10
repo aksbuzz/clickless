@@ -198,17 +198,25 @@ workflow_automate/
 
 ## Examples
 
+A definition is checked when you save it. Every problem is listed at once, for example a `next` that names no step, an unknown action or operator, a step without an action, or a loop made only of branch and delay steps; nothing is stored until the list is empty. Use `"next": "end"` on the last step. See [ADR 0023](docs/adr/0023-validate-workflow-definitions-when-they-are-saved.md).
+
 ### Example: Simple Workflow
 
 ```json
 {
-  "description": "Send a welcome email",
-  "start_at": "send_email",
+  "description": "Tell another system about a new order",
+  "trigger": { "connector_id": "http", "trigger_id": "http_request_received", "config": {} },
+  "start_at": "notify",
   "steps": {
-    "send_email": {
+    "notify": {
       "type": "action",
       "connector_id": "http",
-      "action_id": "post_request",
+      "action_id": "http_request",
+      "config": {
+        "url": "https://example.com/hooks/orders",
+        "method": "POST",
+        "body": { "order_id": "{{order.id}}" }
+      },
       "next": "end"
     }
   }
