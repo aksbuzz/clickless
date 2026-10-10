@@ -44,7 +44,7 @@ Negative / risks:
 - **Benchmarking found three implementation problems, all fixed and tested:** a `NOTIFY` per step serialised every commit on PostgreSQL's global notify lock (about 80 steps/s cap); `psycopg2` closed returned connections beyond `minconn`, reconnecting on almost every use; and many threads exhausted the pool and then PostgreSQL's connection limit.
 - `LISTEN` needs a direct or session-pooled connection (not PgBouncer in transaction mode).
 - Postgres is a single point of failure for state and queue, as it already was for state. Back it up.
-- Table churn: finished jobs are deleted, so autovacuum must keep up; `workflow_instances` and `workflow_step_executions` have no retention policy yet.
+- Table churn: finished jobs are deleted, so autovacuum must keep up; so does the deletion of finished runs after `RETENTION_DAYS` (ADR 0022).
 - No lease heartbeat: a step longer than `JOB_LEASE_SECONDS` is run again by another worker.
 - Upgrading needs a stop, migrate, start; old messages in the outbox are discarded.
 

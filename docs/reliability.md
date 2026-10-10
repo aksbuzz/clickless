@@ -70,7 +70,7 @@ Dead jobs stay in the `jobs` table for inspection (`SELECT ... FROM jobs WHERE s
 - **No heartbeat.** A step that legitimately runs longer than `JOB_LEASE_SECONDS` is run again by another worker. Set the lease above your slowest step.
 - **Webhook deliveries are not de-duplicated.** GitHub redeliveries and Slack retries each start a new instance.
 - **Durability follows PostgreSQL.** With the default `synchronous_commit` a committed start is on disk. Everything is in this one database, so back it up (`pg_dump`, or WAL archiving for point-in-time recovery). Losing the volume loses all workflows and history.
-- **No retention policy yet.** Finished jobs are deleted, but `workflow_instances` and `workflow_step_executions` grow without bound.
+- **History is deleted after `RETENTION_DAYS` (default 30).** Finished runs and their step history are removed by a background thread in the worker; set `RETENTION_DAYS=0` to keep everything. Runs that have not finished are never removed. Back up the database if you may need older history ([ADR 0022](adr/0022-delete-finished-runs-after-a-retention-period.md)).
 
 ---
 
