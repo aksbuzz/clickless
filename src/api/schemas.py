@@ -75,11 +75,6 @@ class MessageOut(BaseModel):
     message: str
 
 
-class RecoveryOut(BaseModel):
-    message: str
-    recovered: list
-
-
 class TriggerResultOut(BaseModel):
     message: str
     triggered: list

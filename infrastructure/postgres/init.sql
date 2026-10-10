@@ -47,7 +47,6 @@ CREATE TABLE workflow_step_executions (
   attempts INTEGER DEFAULT 1,
   started_at TIMESTAMP WITH TIME ZONE NOT NULL,
   completed_at TIMESTAMP WITH TIME ZONE,
-  input_data JSONB,
   output_data JSONB,
   error_details TEXT,
   request_id VARCHAR(36),
@@ -59,17 +58,27 @@ CREATE INDEX idx_step_exec_status ON workflow_step_executions (status);
 CREATE INDEX idx_step_exec_request_id ON workflow_step_executions (request_id);
 
 
-CREATE TABLE outbox (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  destination VARCHAR(255) NOT NULL,
-  payload JSONB NOT NULL,
-  publish_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  processed_at TIMESTAMP WITH TIME ZONE NULL,
-  request_id VARCHAR(36)
+-- The work queue. One job runs one step of one instance; see docs/adr/0017 and 0018.
+CREATE TABLE jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  instance_id   UUID NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+  step_name     VARCHAR(100) NOT NULL,
+  kind          VARCHAR(20)  NOT NULL DEFAULT 'run_step' CHECK (kind IN ('run_step', 'wait_timeout')),
+  status        VARCHAR(20)  NOT NULL DEFAULT 'queued'
+                CHECK (status IN ('queued', 'running', 'dead')),   -- finished jobs are deleted
+  run_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),   -- delays, retry back-off and wait timeouts all use this
+  attempts      INTEGER NOT NULL DEFAULT 0,            -- failures reported by the handler, compared with the step retry policy
+  claims        INTEGER NOT NULL DEFAULT 0,            -- times a worker took the job (guards against a step that kills workers)
+  locked_by     TEXT,
+  locked_until  TIMESTAMPTZ,                           -- the lease: once it has expired another worker may take the job
+  last_error    TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  finished_at   TIMESTAMPTZ                            -- set when a job is marked dead
 );
-CREATE INDEX idx_outbox_unprocessed ON outbox (processed_at) WHERE processed_at IS NULL;
-CREATE INDEX idx_outbox_request_id ON outbox (request_id);
+CREATE INDEX idx_jobs_queued   ON jobs (run_at)       WHERE status = 'queued';
+CREATE INDEX idx_jobs_running  ON jobs (locked_until) WHERE status = 'running';
+CREATE INDEX idx_jobs_instance ON jobs (instance_id);
+CREATE INDEX idx_jobs_dead     ON jobs (id)           WHERE status = 'dead';
 
 CREATE INDEX idx_versions_trigger ON workflow_versions (
   (definition->'trigger'->>'connector_id'),

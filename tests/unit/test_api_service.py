@@ -4,9 +4,7 @@ import pytest
 from unittest.mock import Mock, MagicMock, patch
 
 # Set environment variables before importing modules
-os.environ.setdefault('REDIS_URL', 'redis://localhost:6379')
 os.environ.setdefault('DATABASE_URL', 'postgresql://user:pass@localhost/test')
-os.environ.setdefault('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/')
 
 from src.api.service import WorkflowManagementService
 from src.api.errors import (
@@ -176,43 +174,71 @@ class TestWorkflowManagementService:
         self.mock_repo.list_workflows.assert_called_once()
 
     @patch('src.api.service.structlog')
-    def test_start_workflow_success(self, mock_structlog):
-        """Test starting a workflow."""
+    @patch('src.api.service.runtime')
+    def test_start_workflow_hands_the_start_to_the_engine(self, mock_runtime, mock_structlog):
         mock_structlog.contextvars.get_contextvars.return_value = {"request_id": "req-123"}
-
-        version_row = {
-            "id": "v-456",
-            "workflow_name": "test_workflow",
-            "definition": {"start_at": "step1"}
-        }
-
-        self.mock_repo.find_active_version_by_name.return_value = version_row
-        self.mock_repo.create_instance.return_value = "inst-789"
+        mock_runtime.start_instance.return_value = "inst-789"
 
         result = self.service.start_workflow("test_workflow", {"input": "data"})
 
-        assert result["instance_id"] == "inst-789"
-        assert result["message"] == "Workflow started"
+        assert result == {"message": "Workflow started", "instance_id": "inst-789"}
+        _cursor, name, data = mock_runtime.start_instance.call_args.args[:3]
+        assert (name, data) == ("test_workflow", {"input": "data"})
+        assert mock_runtime.start_instance.call_args.args[3:] == ("req-123",) or             mock_runtime.start_instance.call_args.kwargs.get("request_id") == "req-123"
 
-        self.mock_repo.create_instance.assert_called_once()
-        self.mock_repo.schedule_outbox_message.assert_called_once()
-
-    def test_start_workflow_not_found(self):
-        """Test starting a non-existent workflow."""
-        self.mock_repo.find_active_version_by_name.return_value = None
+    @patch('src.api.service.runtime')
+    def test_start_workflow_not_found(self, mock_runtime):
+        mock_runtime.start_instance.side_effect = WorkflowNotFoundError("Workflow definition not found")
 
         with pytest.raises(WorkflowNotFoundError):
             self.service.start_workflow("nonexistent", {})
 
-    def test_get_instance_success(self):
-        """Test getting a workflow instance."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "running",
-            "current_step": "step1",
-            "data": {"key": "value"}
-        }
+    @patch('src.api.service.runtime')
+    def test_trigger_webhook_starts_the_active_version(self, mock_runtime):
+        self.mock_repo.find_active_version_by_name.return_value = {
+            "id": "v-1", "definition": {"trigger": {"trigger_id": "webhook_received"}, "start_at": "first"}}
+        mock_runtime.start_instance_for_version.return_value = "inst-1"
 
+        result = self.service.trigger_webhook("wf", {"a": 1})
+
+        assert result == {"message": "Workflow triggered", "instance_id": "inst-1"}
+        args = mock_runtime.start_instance_for_version.call_args.args
+        assert args[1:4] == ("v-1", "first", {"a": 1})
+
+    @patch('src.api.service.runtime')
+    def test_trigger_webhook_refuses_a_workflow_with_another_trigger(self, mock_runtime):
+        self.mock_repo.find_active_version_by_name.return_value = {
+            "id": "v-1", "definition": {"trigger": {"trigger_id": "github_push_received"}, "start_at": "first"}}
+
+        with pytest.raises(InvalidStateError):
+            self.service.trigger_webhook("wf", {})
+        mock_runtime.start_instance_for_version.assert_not_called()
+
+    @patch('src.api.service.runtime')
+    def test_trigger_webhook_unknown_workflow(self, mock_runtime):
+        self.mock_repo.find_active_version_by_name.return_value = None
+
+        with pytest.raises(WorkflowNotFoundError):
+            self.service.trigger_webhook("nope", {})
+
+    @patch('src.api.service.runtime')
+    def test_external_trigger_starts_one_instance_per_matching_workflow(self, mock_runtime):
+        self.mock_repo.find_active_versions_by_trigger.return_value = [
+            {"id": "v-1", "workflow_name": "match", "definition": {"start_at": "a", "trigger": {"config": {"repo": "x"}}}},
+            {"id": "v-2", "workflow_name": "other", "definition": {"start_at": "b", "trigger": {"config": {"repo": "y"}}}},
+        ]
+        mock_runtime.start_instance_for_version.return_value = "inst-1"
+        handler = Mock()
+        handler.matches_workflow_config.side_effect = lambda event, config: config.get("repo") == "x"
+        event = Mock(connector_id="github", trigger_id="github_push_received", data={"k": 1})
+
+        started = self.service.process_external_trigger(event, handler)
+
+        assert started == [{"workflow_name": "match", "instance_id": "inst-1"}]
+        assert mock_runtime.start_instance_for_version.call_count == 1
+
+    def test_get_instance_success(self):
+        instance_data = {"id": "inst-123", "status": "running", "current_step": "step1", "data": {"key": "value"}}
         self.mock_repo.get_instance.return_value = instance_data
 
         result = self.service.get_instance("inst-123")
@@ -221,45 +247,27 @@ class TestWorkflowManagementService:
         assert result["status"] == "running"
 
     def test_get_instance_not_found(self):
-        """Test getting a non-existent instance."""
         self.mock_repo.get_instance.return_value = None
 
         with pytest.raises(InstanceNotFoundError):
             self.service.get_instance("nonexistent")
 
-    def test_cancel_instance_success(self):
-        """Test canceling a running instance."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "running"
-        }
-
-        self.mock_repo.get_instance.return_value = instance_data
-
+    @patch('src.api.service.runtime')
+    def test_cancel_instance_is_done_by_the_engine(self, mock_runtime):
         result = self.service.cancel_instance("inst-123")
 
-        assert result["message"] == "Workflow cancelled"
-        self.mock_repo.update_instance_status.assert_called_once_with("inst-123", "cancelled")
+        assert result == {"message": "Workflow cancelled", "instance_id": "inst-123"}
+        assert mock_runtime.cancel_instance.call_args.args[1] == "inst-123"
 
-    def test_cancel_instance_already_completed(self):
-        """Test canceling a completed instance."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "completed"
-        }
-
-        self.mock_repo.get_instance.return_value = instance_data
+    @patch('src.api.service.runtime')
+    def test_cancel_instance_passes_engine_errors_through(self, mock_runtime):
+        mock_runtime.cancel_instance.side_effect = InvalidStateError("Cannot cancel instance with status 'completed'")
 
         with pytest.raises(InvalidStateError):
             self.service.cancel_instance("inst-123")
 
     def test_list_instances(self):
-        """Test listing instances with filters."""
-        instances = [
-            {"id": "inst-1", "status": "running"},
-            {"id": "inst-2", "status": "pending"}
-        ]
-
+        instances = [{"id": "inst-1", "status": "running"}, {"id": "inst-2", "status": "pending"}]
         self.mock_repo.list_instances.return_value = instances
 
         result = self.service.list_instances(status="running", limit=10)
@@ -268,66 +276,26 @@ class TestWorkflowManagementService:
         self.mock_repo.list_instances.assert_called_once_with("running", None, 10, 0)
 
     def test_list_connectors(self):
-        """Test listing available connectors."""
         result = self.service.list_connectors()
 
         assert len(result) > 0
         assert any(c["id"] == "http" for c in result)
 
-    def test_send_event_success(self):
-        """Test sending event to waiting workflow."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "running",
-            "current_step": "wait_step",
-            "definition": {
-                "steps": {
-                    "wait_step": {
-                        "type": "wait_for_event",
-                        "event_name": "approval"
-                    }
-                }
-            }
-        }
-
-        self.mock_repo.get_instance_with_definition.return_value = instance_data
+    @patch('src.api.service.runtime')
+    def test_send_event_resumes_the_waiting_step_through_the_engine(self, mock_runtime):
+        mock_runtime.send_event.return_value = "wait_step"
 
         result = self.service.send_event("inst-123", {"approved": True})
 
-        assert result["message"] == "Event received, workflow resuming"
-        self.mock_repo.schedule_outbox_message.assert_called_once()
+        assert result == {"message": "Event received, workflow resuming", "instance_id": "inst-123", "step": "wait_step"}
+        assert mock_runtime.send_event.call_args.args[1:] == ("inst-123", {"approved": True})
 
-    def test_send_event_instance_not_running(self):
-        """Test sending event to non-running instance."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "completed",
-            "current_step": "wait_step"
-        }
-
-        self.mock_repo.get_instance_with_definition.return_value = instance_data
+    @patch('src.api.service.runtime')
+    def test_send_event_passes_engine_errors_through(self, mock_runtime):
+        mock_runtime.send_event.side_effect = InvalidStateError("Instance is not waiting for an event")
 
         with pytest.raises(InvalidStateError):
             self.service.send_event("inst-123", {})
 
-    def test_send_event_not_waiting_step(self):
-        """Test sending event when step is not wait_for_event."""
-        instance_data = {
-            "id": "inst-123",
-            "status": "running",
-            "current_step": "action_step",
-            "definition": {
-                "steps": {
-                    "action_step": {
-                        "type": "action",
-                        "connector_id": "http",
-                        "action_id": "get"
-                    }
-                }
-            }
-        }
-
-        self.mock_repo.get_instance_with_definition.return_value = instance_data
-
-        with pytest.raises(InvalidStateError):
-            self.service.send_event("inst-123", {})
+    def test_the_service_no_longer_has_a_recovery_sweeper(self):
+        assert not hasattr(self.service, "recover_stuck_instances")

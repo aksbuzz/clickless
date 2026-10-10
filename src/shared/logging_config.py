@@ -37,7 +37,7 @@ def setup_logging():
   root_logger.addHandler(handler)
   root_logger.setLevel(logging.INFO)
 
-  for _log in ["pika", "celery", "uvicorn", "aioredis"]:
+  for _log in ["uvicorn"]:
     logging.getLogger(_log).setLevel(logging.WARNING)
 
   structlog.contextvars.clear_contextvars()

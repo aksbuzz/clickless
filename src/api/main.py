@@ -11,7 +11,7 @@ from src.shared.metrics import http_requests_total, http_request_duration_second
 
 from src.api.auth import require_api_key, validate_auth_config
 from src.api.exception_handlers import register_exception_handlers
-from src.api.routers import health, connectors, connections, workflows, instances, triggers, admin
+from src.api.routers import health, connectors, connections, workflows, instances, triggers
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -39,7 +39,6 @@ app.include_router(connections.router, dependencies=authenticated)
 app.include_router(workflows.router, dependencies=authenticated)
 app.include_router(instances.router, dependencies=authenticated)
 app.include_router(triggers.router)
-app.include_router(admin.router, dependencies=authenticated)
 
 
 @app.middleware("http")

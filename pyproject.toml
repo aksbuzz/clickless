@@ -6,8 +6,7 @@ authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 packages = [
     { include = "api", from = "src" },
-    { include = "orchestration", from = "src" },
-    { include = "relay", from = "src" },
+    { include = "engine", from = "src" },
     { include = "shared", from = "src" },
     { include = "worker", from = "src" },
 ]
@@ -18,18 +17,13 @@ python = "^3.12"
 fastapi = "*"
 uvicorn = "*"
 gunicorn = "*"
-celery = {extras = ["redis"], version = "*"}
 psycopg2-binary = "*"
-redis = "*"
-pika = "*"
-boto3 = "*"
 structlog = "*"
 httpx = "*"
 prometheus-client = "*"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
-testcontainers = "*"
 
 [build-system]
 requires = ["poetry-core"]

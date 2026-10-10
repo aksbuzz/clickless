@@ -1,6 +1,5 @@
 import httpx
 
-from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
 from src.shared.net_guard import OutboundBlocked, check_url
 from src.worker.models import ActionStatus, ActionResult
@@ -10,7 +9,7 @@ from src.worker.registry import action
 @action("slack_send_message")
 class SlackSendMessageHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         webhook_url = config.get("webhook_url", "")
         text = config.get("text", "")
 

@@ -1,4 +1,7 @@
-"""Values from triggers and earlier steps must reach SQL only as bound parameters."""
+"""Values from triggers and earlier steps must reach SQL only as bound parameters.
+
+Templating itself happens in the engine (see test_engine_steps.py and test_handlers_do_not_template.py); these
+tests check that the handlers never rebuild the SQL or the connection string from the data."""
 import pytest
 
 from src.worker.handlers.postgresql import PostgresExecuteHandler, PostgresQueryHandler
@@ -62,15 +65,6 @@ def test_query_text_is_used_exactly_as_written(db, handler):
     result = handler().execute("i-1", dict(DATA), config={"connection_string": "postgresql://h/d", "query": query})
     assert result.status.value == "success"
     assert db["executed"][0][0] == query
-
-
-@pytest.mark.parametrize("handler", HANDLERS)
-def test_params_are_templated_and_passed_separately(db, handler):
-    config = {"connection_string": "postgresql://h/d", "query": "SELECT %s, %s", "params": ["{{user}}", "{{order.id}}"]}
-    handler().execute("i-1", dict(DATA), config=config)
-    query, params = db["executed"][0]
-    assert query == "SELECT %s, %s"
-    assert params == [HOSTILE, "7"]
 
 
 @pytest.mark.parametrize("handler", HANDLERS)

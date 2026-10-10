@@ -1,8 +1,7 @@
 import structlog
 
 from src.shared.logging_config import log
-from src.shared.constants import ORCHESTRATION_QUEUE, ACTIONS_QUEUE
-from src.shared.event_types import EventType
+from src.engine import runtime
 from src.shared.connectors.registry import ConnectorRegistry
 from src.shared.db import db_cursor
 from src.shared.triggers.models import TriggerEvent
@@ -15,8 +14,6 @@ from src.api.errors import (
     ConnectionNotFoundError, DuplicateConnectionError,
 )
 from src.api.health import HealthChecker
-
-TERMINAL_STATUSES = ("completed", "failed", "cancelled")
 
 
 class WorkflowManagementService:
@@ -92,17 +89,7 @@ class WorkflowManagementService:
         request_id = structlog.contextvars.get_contextvars().get("request_id")
 
         with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            row = repo.find_active_version_by_name(definition_name)
-            if not row:
-                raise WorkflowNotFoundError("Workflow definition not found")
-
-            version_id = str(row["id"])
-            instance_id = repo.create_instance(version_id, "pending", data, request_id)
-            repo.schedule_outbox_message(
-                ORCHESTRATION_QUEUE,
-                {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
-            )
+            instance_id = runtime.start_instance(cur, definition_name, data, request_id)
 
         log.info("Workflow started", instance_id=instance_id, request_id=request_id)
         return {"message": "Workflow started", "instance_id": instance_id}
@@ -112,8 +99,7 @@ class WorkflowManagementService:
         request_id = structlog.contextvars.get_contextvars().get("request_id")
 
         with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            row = repo.find_active_version_by_name(workflow_name)
+            row = WorkflowRepository(cur).find_active_version_by_name(workflow_name)
             if not row:
                 raise WorkflowNotFoundError("Workflow not found")
 
@@ -122,12 +108,8 @@ class WorkflowManagementService:
             if trigger.get("trigger_id") not in ("webhook_received", "http_request_received"):
                 raise InvalidStateError("Workflow does not accept webhook triggers")
 
-            version_id = str(row["id"])
-            instance_id = repo.create_instance(version_id, "pending", data, request_id)
-            repo.schedule_outbox_message(
-                ORCHESTRATION_QUEUE,
-                {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
-            )
+            instance_id = runtime.start_instance_for_version(
+                cur, str(row["id"]), definition.get("start_at"), data, request_id)
 
         log.info("Workflow triggered via webhook", instance_id=instance_id, request_id=request_id)
         return {"message": "Workflow triggered", "instance_id": instance_id}
@@ -147,50 +129,17 @@ class WorkflowManagementService:
 
     def cancel_instance(self, instance_id: str) -> dict:
         with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            instance = repo.get_instance(instance_id)
-            if not instance:
-                raise InstanceNotFoundError("Instance not found")
-
-            if instance["status"] in TERMINAL_STATUSES:
-                raise InvalidStateError(f"Cannot cancel instance with status '{instance['status']}'")
-
-            repo.update_instance_status(instance_id, "cancelled")
+            runtime.cancel_instance(cur, instance_id)
 
         log.info("Workflow cancelled", instance_id=instance_id)
         return {"message": "Workflow cancelled", "instance_id": instance_id}
 
     def send_event(self, instance_id: str, data: dict) -> dict:
         with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            row = repo.get_instance_with_definition(instance_id)
-            if not row:
-                raise InstanceNotFoundError("Instance not found")
+            step = runtime.send_event(cur, instance_id, data)
 
-            if row["status"] != "running":
-                raise InvalidStateError(f"Instance is not running (status: '{row['status']}')")
-
-            current_step = row["current_step"]
-            if not current_step:
-                raise InvalidStateError("Instance has no active step")
-
-            definition = row["definition"]
-            step_def = definition.get("steps", {}).get(current_step, {})
-            if step_def.get("type") != "wait_for_event":
-                raise InvalidStateError(f"Current step '{current_step}' is not a wait_for_event step")
-
-            repo.schedule_outbox_message(
-                ORCHESTRATION_QUEUE,
-                {
-                    "type": EventType.STEP_COMPLETE.value,
-                    "instance_id": instance_id,
-                    "step_name": current_step,
-                    "data": data,
-                }
-            )
-
-        log.info("Event sent to resume workflow", instance_id=instance_id, step=current_step)
-        return {"message": "Event received, workflow resuming", "instance_id": instance_id, "step": current_step}
+        log.info("Event sent to resume workflow", instance_id=instance_id, step=step)
+        return {"message": "Event received, workflow resuming", "instance_id": instance_id, "step": step}
 
     def process_external_trigger(self, event: TriggerEvent, handler: TriggerHandlerPort) -> list:
         log.info("Processing external trigger", connector_id=event.connector_id, trigger_id=event.trigger_id)
@@ -198,8 +147,7 @@ class WorkflowManagementService:
 
         started = []
         with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            versions = repo.find_active_versions_by_trigger(event.connector_id, event.trigger_id)
+            versions = WorkflowRepository(cur).find_active_versions_by_trigger(event.connector_id, event.trigger_id)
 
             if not versions:
                 log.info("No workflows matched trigger", connector_id=event.connector_id, trigger_id=event.trigger_id)
@@ -212,69 +160,12 @@ class WorkflowManagementService:
                 if not handler.matches_workflow_config(event, trigger_config):
                     continue
 
-                version_id = str(version_row["id"])
-                instance_id = repo.create_instance(version_id, "pending", event.data, request_id)
-                repo.schedule_outbox_message(
-                    ORCHESTRATION_QUEUE,
-                    {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id, "request_id": request_id}
-                )
+                instance_id = runtime.start_instance_for_version(
+                    cur, str(version_row["id"]), definition.get("start_at"), event.data, request_id)
                 started.append({"workflow_name": version_row["workflow_name"], "instance_id": instance_id})
                 log.info("Workflow triggered", workflow=version_row["workflow_name"], instance_id=instance_id)
 
         return started
-
-    def recover_stuck_instances(self, stale_seconds: int = 60) -> list:
-        recovered = []
-
-        with db_cursor() as cur:
-            repo = WorkflowRepository(cur)
-            stuck = repo.find_stuck_instances(stale_seconds)
-
-            for instance in stuck:
-                instance_id = str(instance["id"])
-                status = instance["status"]
-                current_step = instance["current_step"]
-                definition = instance["definition"]
-
-                if status == "pending":
-                    repo.schedule_outbox_message(
-                        ORCHESTRATION_QUEUE,
-                        {"type": EventType.START_WORKFLOW.value, "instance_id": instance_id}
-                    )
-                    recovered.append({"instance_id": instance_id, "action": "re-queued START_WORKFLOW"})
-                    log.info("Recovery: re-queued START_WORKFLOW", instance_id=instance_id)
-
-                elif status == "running" and current_step:
-                    step_exec = repo.find_latest_step_execution(instance_id, current_step)
-
-                    if step_exec and step_exec["status"] == "completed":
-                        repo.schedule_outbox_message(
-                            ORCHESTRATION_QUEUE,
-                            {
-                                "type": EventType.STEP_COMPLETE.value,
-                                "instance_id": instance_id,
-                                "step_name": current_step,
-                                "data": step_exec.get("output_data") or instance.get("data") or {},
-                            }
-                        )
-                        recovered.append({"instance_id": instance_id, "action": f"re-queued STEP_COMPLETE for {current_step}"})
-                        log.info("Recovery: re-queued STEP_COMPLETE", instance_id=instance_id, step=current_step)
-                    else:
-                        step_def = definition.get("steps", {}).get(current_step, {})
-                        action_id = step_def.get("action_id", current_step)
-                        payload = {
-                            "action": action_id,
-                            "step_name": current_step,
-                            "instance_id": instance_id,
-                            "config": step_def.get("config", {}),
-                        }
-                        if step_def.get("connection_id"):
-                            payload["connection_id"] = step_def["connection_id"]
-                        repo.schedule_outbox_message(ACTIONS_QUEUE, payload)
-                        recovered.append({"instance_id": instance_id, "action": f"re-dispatched action for {current_step}"})
-                        log.info("Recovery: re-dispatched action", instance_id=instance_id, step=current_step)
-
-        return recovered
 
     def get_instance_steps(self, instance_id: str) -> list:
         with db_cursor() as cur:

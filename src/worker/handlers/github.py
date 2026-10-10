@@ -1,6 +1,5 @@
 import httpx
 
-from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
 from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
@@ -11,7 +10,7 @@ GITHUB_API_BASE = "https://api.github.com"
 @action("github_create_issue")
 class GitHubCreateIssueHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         token = config.get("token", "")
         owner = config.get("owner", "")
         repo = config.get("repo", "")
@@ -53,7 +52,7 @@ class GitHubCreateIssueHandler:
 @action("github_add_comment")
 class GitHubAddCommentHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = config or {}   # templates were already resolved by the engine
         token = config.get("token", "")
         owner = config.get("owner", "")
         repo = config.get("repo", "")

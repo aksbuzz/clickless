@@ -1,13 +1,23 @@
-from typing import Dict, Any
-from datetime import datetime
+import os
 import time
+from datetime import datetime, timezone
+from typing import Any, Dict
 
-from src.shared.redis_client import redis_client
-from src.shared.celery_app import app as celery_app
+from src.engine import runtime
 from src.shared.logging_config import log
+
+DEFAULT_MAX_JOB_AGE_SECONDS = 30.0
+
+
+def _max_job_age() -> float:
+    try:
+        return float(os.getenv("HEALTH_MAX_JOB_AGE_SECONDS", DEFAULT_MAX_JOB_AGE_SECONDS))
+    except ValueError:
+        return DEFAULT_MAX_JOB_AGE_SECONDS
 
 
 class HealthChecker:
+    """Two things can be wrong: the database is unreachable, or due jobs are not being picked up (no worker)."""
 
     @staticmethod
     def check_postgres(cursor) -> Dict[str, Any]:
@@ -21,65 +31,29 @@ class HealthChecker:
             return {"status": "unhealthy", "error": str(e)}
 
     @staticmethod
-    def check_redis() -> Dict[str, Any]:
+    def check_queue(cursor) -> Dict[str, Any]:
         try:
-            start = time.time()
-            redis_client.ping()
-            latency_ms = round((time.time() - start) * 1000, 2)
-            info = redis_client.info()
+            stats = runtime.queue_stats(cursor)
+        except Exception as e:
+            log.error("Job queue health check failed", exc_info=True)
+            return {"status": "unhealthy", "error": str(e)}
+        oldest = stats["oldest_due_seconds"]
+        if oldest is not None and oldest > _max_job_age():
             return {
-                "status": "healthy",
-                "latency_ms": latency_ms,
-                "connected_clients": info.get("connected_clients"),
-                "used_memory_human": info.get("used_memory_human"),
+                "status": "unhealthy", **stats,
+                "error": f"jobs have been waiting {oldest} s to be picked up; is a worker running?",
             }
-        except Exception as e:
-            log.error("Redis health check failed", exc_info=True)
-            return {"status": "unhealthy", "error": str(e)}
-
-    @staticmethod
-    def check_rabbitmq() -> Dict[str, Any]:
-        try:
-            start = time.time()
-            with celery_app.connection_or_acquire() as conn:
-                conn.connect()
-            latency_ms = round((time.time() - start) * 1000, 2)
-            return {"status": "healthy", "latency_ms": latency_ms}
-        except Exception as e:
-            log.error("RabbitMQ health check failed", exc_info=True)
-            return {"status": "unhealthy", "error": str(e)}
-
-    @staticmethod
-    def check_celery_workers() -> Dict[str, Any]:
-        try:
-            inspect = celery_app.control.inspect(timeout=2.0)
-            stats = inspect.stats()
-            if not stats:
-                return {"status": "unhealthy", "error": "No workers available", "workers": []}
-            workers = [
-                {
-                    "name": name,
-                    "pool": s.get("pool", {}).get("implementation"),
-                    "max_concurrency": s.get("pool", {}).get("max-concurrency"),
-                }
-                for name, s in stats.items()
-            ]
-            return {"status": "healthy", "worker_count": len(workers), "workers": workers}
-        except Exception as e:
-            log.error("Celery worker health check failed", exc_info=True)
-            return {"status": "unhealthy", "error": str(e), "workers": []}
+        return {"status": "healthy", **stats}
 
     @classmethod
-    def comprehensive_check(cls, db_cursor) -> Dict[str, Any]:
+    def comprehensive_check(cls, cursor) -> Dict[str, Any]:
         checks = {
-            "postgres": cls.check_postgres(db_cursor),
-            "redis": cls.check_redis(),
-            "rabbitmq": cls.check_rabbitmq(),
-            "celery_workers": cls.check_celery_workers(),
+            "postgres": cls.check_postgres(cursor),
+            "queue": cls.check_queue(cursor),
         }
         all_healthy = all(c.get("status") == "healthy" for c in checks.values())
         return {
             "status": "healthy" if all_healthy else "degraded",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "checks": checks,
         }

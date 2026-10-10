@@ -2,7 +2,6 @@ import psycopg2
 import psycopg2.extensions
 import psycopg2.extras
 
-from src.shared.connectors.template import resolve_config
 from src.shared.logging_config import log
 from src.shared.net_guard import OutboundBlocked, check_host
 from src.worker.models import ActionStatus, ActionResult
@@ -22,19 +21,14 @@ def _guard_dsn(connection_string: str) -> None:
         check_host(host)
 
 
-def _prepare(config: dict, data: dict) -> dict:
-    """Template only 'params'. 'query' and 'connection_string' are used exactly as written, so values that
-    come from triggers or earlier steps can never change the SQL or choose the database; they reach the
-    database only as bound parameters (%s placeholders)."""
-    prepared = dict(config)
-    prepared["params"] = resolve_config({"params": config.get("params", [])}, data)["params"]
-    return prepared
-
-
 @action("postgresql_query")
 class PostgresQueryHandler:
+    # The engine resolves {{templates}} in a step's config, except for these keys. Values from triggers and
+    # earlier steps must reach the database only as bound parameters, never as SQL text or as the connection.
+    untemplated_keys = ("query", "connection_string")
+
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = _prepare(config or {}, data)
+        config = config or {}   # {{params}} were already resolved by the engine
         connection_string = config.get("connection_string", "")
         query = config.get("query", "")
         params = config.get("params", [])
@@ -70,8 +64,12 @@ class PostgresQueryHandler:
 
 @action("postgresql_execute")
 class PostgresExecuteHandler:
+    # The engine resolves {{templates}} in a step's config, except for these keys. Values from triggers and
+    # earlier steps must reach the database only as bound parameters, never as SQL text or as the connection.
+    untemplated_keys = ("query", "connection_string")
+
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = _prepare(config or {}, data)
+        config = config or {}   # {{params}} were already resolved by the engine
         connection_string = config.get("connection_string", "")
         query = config.get("query", "")
         params = config.get("params", [])

@@ -1,25 +1,11 @@
-class WorkflowError(Exception):
-  pass
-
-class WorkflowNotFoundError(WorkflowError):
-  pass
-
-class InstanceNotFoundError(WorkflowError):
-  pass
-
-class InvalidStateError(WorkflowError):
-  pass
-
-class DuplicateWorkflowError(WorkflowError):
-  pass
-
-class ConnectionNotFoundError(WorkflowError):
-  pass
-
-class DuplicateConnectionError(WorkflowError):
-  pass
-
-class ValidationError(WorkflowError):
-  def __init__(self, errors: list):
-    self.errors = errors
-    super().__init__(f"Validation errors: {errors}")
+# The error classes live in src.shared.errors so the engine can raise them too; re-exported here for the API.
+from src.shared.errors import (  # noqa: F401
+    ConnectionNotFoundError,
+    DuplicateConnectionError,
+    DuplicateWorkflowError,
+    InstanceNotFoundError,
+    InvalidStateError,
+    ValidationError,
+    WorkflowError,
+    WorkflowNotFoundError,
+)

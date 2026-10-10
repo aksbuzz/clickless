@@ -30,7 +30,6 @@ PROTECTED = [
     ("GET", f"/connections/{SOME_ID}"),
     ("DELETE", f"/connections/{SOME_ID}"),
     ("GET", "/connectors"),
-    ("POST", "/admin/recover"),
     ("GET", "/metrics"),
     ("GET", "/health"),
 ]

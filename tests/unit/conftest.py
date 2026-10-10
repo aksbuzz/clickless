@@ -4,9 +4,7 @@ import pytest
 from unittest.mock import Mock
 
 # Set environment variables for all unit tests
-os.environ.setdefault('REDIS_URL', 'redis://localhost:6379')
 os.environ.setdefault('DATABASE_URL', 'postgresql://user:pass@localhost/test')
-os.environ.setdefault('RABBITMQ_URL', 'amqp://guest:guest@localhost:5672/')
 
 
 @pytest.fixture
