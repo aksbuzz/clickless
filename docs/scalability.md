@@ -113,11 +113,11 @@ The benchmarks above ran with PostgreSQL's defaults. [PGTune](https://pgtune.leo
 
 Same for both: `max_connections = 50`, `checkpoint_completion_target = 0.9`, `wal_buffers = 16MB`, `default_statistics_target = 100`, `random_page_cost = 1.1`, `effective_io_concurrency = 200`, `huge_pages = off`, `jit = off`, `wal_compression = lz4` (needs a PostgreSQL built with lz4), `min_wal_size = 2GB`, `max_wal_size = 8GB`. PGTune does not set autovacuum, `synchronous_commit` or `checkpoint_timeout`.
 
-Housekeeping (from [Hatchet's PostgreSQL guide](https://hatchet.run/blog/postgres-survival-guide) unless noted; none of it is applied or measured here):
+Housekeeping (from [Hatchet's PostgreSQL guide](https://hatchet.run/blog/postgres-survival-guide) unless noted; apart from retention, none of it is applied, and none of it is measured here):
 
 - Keep transactions short and never call external services inside one. The engine already holds no transaction while a handler runs.
 - Tune autovacuum before bloat appears; the jobs and instance tables are updated constantly. Watch for autovacuum runs longer than about an hour in `pg_stat_activity`, and monitor transaction-id age for wraparound.
-- Plan retention. `workflow_step_executions` and `workflow_instances` grow without bound (the `jobs` table does not: finished jobs are deleted). Time-based partitions make dropping old data instant.
+- Retention is built in: finished runs older than `RETENTION_DAYS` (default 30) are deleted in batches ([ADR 0022](adr/0022-delete-finished-runs-after-a-retention-period.md)), and finished jobs are deleted as they complete. The deletes leave dead tuples for autovacuum, so the tuning above matters. Time-based partitions would make dropping old data instant if volume ever needs it.
 - Use `pg_repack` rather than `VACUUM FULL` for bloat. Create indexes concurrently, and do not over-index.
 - General practice, not from that guide: lower `fillfactor` on `workflow_instances` and `jobs` so updates can be HOT (an index on a frequently changed column such as `idx_instances_status` prevents that); and `LISTEN` needs a direct or session-pooled connection, so keep PgBouncer in transaction mode away from the worker's listener.
 

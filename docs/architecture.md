@@ -71,6 +71,7 @@ A workflow is a versioned JSON document in `workflow_versions.definition`. Savin
 - A **workflow instance** is one run. Status: `pending` then `running` then `completed`, `failed` or `cancelled`. `data` is a JSON object that accumulates what each step changed.
 - A **step execution** is one attempt at one step: a row with status, the attempt number, the error text if it failed, and the data the step changed (`output_data`). A retried step has one row per attempt.
 - A **job** is the unit of work: "run step X of instance Y, no earlier than T". An instance has at most one live job, because workflows are sequential. Finished jobs are deleted; the table holds only work to do (`queued`, `running`) and jobs that gave up (`dead`).
+- Finished instances, with their step executions, are deleted after `RETENTION_DAYS` (default 30) by a thread in the worker; instances that have not finished are never deleted ([ADR 0022](adr/0022-delete-finished-runs-after-a-retention-period.md)).
 
 ---
 

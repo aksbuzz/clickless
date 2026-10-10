@@ -12,6 +12,7 @@ Entry point `src/worker/main.py`, logic in `src/engine/worker.py`.
 worker process
 ├── dispatcher thread      holds the one LISTEN connection; wakes runners
 ├── step-runner thread x N  each: claim -> begin -> run handler -> finish -> repeat
+├── housekeeper thread      deletes finished runs older than RETENTION_DAYS (hourly)
 └── metrics server          Prometheus on port 9100
 ```
 
@@ -40,6 +41,10 @@ A job due in 30 seconds is claimed within about 50 ms of becoming due, without a
 - **Retry.** A failed attempt with attempts left updates the same job: `run_at = now + retry.delay_seconds`, claim count reset.
 - **Wait timeout.** Arming a `wait_for_event` step queues a `wait_timeout` job for `timeout_seconds` later. Resuming the instance deletes it. If it fires while the instance is still waiting, the instance fails.
 - **Lease expiry.** A running job whose `locked_until` has passed is claimable again; that is how work from a crashed worker returns to the queue.
+
+## Housekeeping
+
+One more thread per worker process deletes finished runs older than `RETENTION_DAYS` (default 30, `0` turns it off): a first pass a minute after start, then hourly, in batches of 500 that skip any row another transaction holds. Runs that have not finished are never deleted. See [ADR 0022](adr/0022-delete-finished-runs-after-a-retention-period.md).
 
 ## Shutdown
 

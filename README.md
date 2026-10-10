@@ -137,6 +137,10 @@ docker compose down -v
 docker compose restart
 ```
 
+### How long history is kept
+
+Finished runs (completed, failed or cancelled) and their step history are deleted after `RETENTION_DAYS` days, **30 by default**. Set it in `.env`; `0` keeps everything forever. Runs that have not finished are never deleted, and deleted history can only be recovered from a database backup. The worker does this in the background (first pass a minute after it starts, then hourly). See [ADR 0022](docs/adr/0022-delete-finished-runs-after-a-retention-period.md).
+
 ### Run more workers
 
 Each worker runs up to `WORKER_CONCURRENCY` steps at once (default 8). For more capacity, raise that or add workers:
@@ -293,6 +297,8 @@ docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB
 ```
 
 Upgrading from the version that used RabbitMQ, Redis and Celery: stop the stack, apply migration `002_job_queue.sql` (it turns unfinished instances into jobs so they resume), then start the new stack. Remove the old `RABBITMQ_*` and `REDIS_*` settings from `.env`.
+
+Upgrading to a version with retention: apply migration `003_retention_index.sql` (same command as above), and decide `RETENTION_DAYS` first. About a minute after the first worker starts, every finished run older than the period (30 days unless you set it) is deleted.
 
 Upgrading to encrypted connection credentials: run `sh scripts/init-env.sh --upgrade` to add `SECRETS_KEY` to your existing `.env` (keep a copy), restart the stack, then run `docker compose run --rm api python -m src.api.encrypt_connections` to encrypt the credentials already stored. Until you do, they still work as plaintext and are encrypted the next time each connection is saved.
 

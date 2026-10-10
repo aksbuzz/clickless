@@ -2,7 +2,7 @@
 
 This directory is the decision log for the workflow automation platform. Each ADR states the context, the decision, alternatives, and the consequences, including the known problems. **The log describes the code as it is** ([ADR 0001](0001-record-architecture-decisions.md)): an ADR is edited when its code changes, and deleted when the code is gone.
 
-ADRs 0004 to 0016 were written after the fact from the code, the git history and the early design notes; their "alternatives considered" sections reflect evident trade-offs, not a record of past discussions. ADRs 0017 to 0021 were written as the decisions were taken.
+ADRs 0004 to 0016 were written after the fact from the code, the git history and the early design notes; their "alternatives considered" sections reflect evident trade-offs, not a record of past discussions. ADRs 0017 to 0022 were written as the decisions were taken.
 
 References such as `F-24` point to findings in the review, [`../audit-2026-10-07.md`](../audit-2026-10-07.md), which lists what is fixed and what is still open.
 
@@ -23,6 +23,7 @@ References such as `F-24` point to findings in the review, [`../audit-2026-10-07
 | [0019](0019-remove-the-in-process-python-code-step.md) | Remove the in-process Python code step | Accepted |
 | [0020](0020-shared-api-key-authentication-and-private-internal-services.md) | Shared API key authentication, private internal services | Accepted |
 | [0021](0021-guard-outbound-requests-from-workflow-handlers.md) | Guard outbound requests from workflow handlers | Accepted |
+| [0022](0022-delete-finished-runs-after-a-retention-period.md) | Delete finished runs after a retention period | Accepted |
 
 **Numbers that no longer exist** (their decisions were replaced and their code removed; the reasoning that still matters is in 0017 and 0018, and git history has the originals): 0002 transactional outbox with a polling relay, 0003 Celery on RabbitMQ with late acknowledgement and dead-letter queues, 0005 event-driven orchestrator with a per-instance Redis lock, 0006 at-least-once execution with a worker-side idempotency check, 0007 recovery sweeper, 0010 in-process Python code step (removed by 0019).
 
