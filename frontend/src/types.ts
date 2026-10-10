@@ -56,6 +56,8 @@ export interface SchemaProperty {
   maximum?: number;
   items?: { type: string };
   additionalProperties?: { type: string };
+  /** A secret: it can be set but is never returned by the API. */
+  writeOnly?: boolean;
 }
 
 export interface ConfigSchema {
@@ -98,7 +100,9 @@ export interface Connection {
 }
 
 export interface ConnectionDetail extends Connection {
+  /** The non-secret fields. Secrets are never returned; `secrets_set` names those that hold a value. */
   config: Record<string, unknown>;
+  secrets_set: string[];
 }
 
 // --- Workflow detail (from GET /workflows/:id) ---

@@ -16,6 +16,7 @@ export function ConnectionsPage() {
   const [formConnectorId, setFormConnectorId] = useState('');
   const [formName, setFormName] = useState('');
   const [formConfig, setFormConfig] = useState<Record<string, unknown>>({});
+  const [secretsSet, setSecretsSet] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -29,6 +30,7 @@ export function ConnectionsPage() {
     setFormConnectorId(connectableConnectors[0]?.id ?? '');
     setFormName('');
     setFormConfig({});
+    setSecretsSet([]);
     setFormError(null);
     setModalOpen(true);
   }
@@ -40,6 +42,7 @@ export function ConnectionsPage() {
       setFormConnectorId(detail.connector_id);
       setFormName(detail.name);
       setFormConfig(detail.config);
+      setSecretsSet(detail.secrets_set);
       setFormError(null);
       setModalOpen(true);
     } catch (e) {
@@ -226,6 +229,7 @@ export function ConnectionsPage() {
                 schema={selectedConnector.connection_schema}
                 values={formConfig}
                 onChange={setFormConfig}
+                secretsSet={secretsSet}
               />
             </div>
           )}
