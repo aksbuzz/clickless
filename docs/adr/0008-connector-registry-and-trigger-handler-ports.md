@@ -37,7 +37,7 @@ Negative / known gaps:
 - The two sides are linked only by the `action_id` string, with no startup or test check that every declared action has a handler. A mismatch becomes a runtime `Reject` and a stranded instance (F-08).
 - Lookup is global by `action_id`, not `(connector_id, action_id)` as `docs/architecture.md` states; ids must be unique across connectors, and `connector_id` in a step is never checked.
 - The `flow_control` connector declares `branch`, `delay` and `wait_for_event` as actions, but they are engine step types with no handler; using them as `type: action` passes validation and then fails at run time.
-- Templating is opt-in per handler. `log`, `transform_data`, `http_request` and `send_webhook` in `src/worker/handlers/action_handlers.py` never call `resolve_config`, so `{{...}}` placeholders in the seed workflow and README examples are passed through literally (F-09). Where it is applied, it substitutes into every string, including SQL text (ADR 0011, F-05).
+- Templating is opt-in per handler. `log`, `transform_data`, `http_request` and `send_webhook` in `src/worker/handlers/action_handlers.py` never call `resolve_config`, so `{{...}}` placeholders in the seed workflow and README examples are passed through literally (F-09). Where it is applied, it substitutes into every string (the PostgreSQL handlers no longer template SQL text or connection strings, F-05, fixed 2026-10-10).
 - Legacy handlers `initial_step` and `final_step` have no connector definition.
 
 ## References

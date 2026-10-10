@@ -22,11 +22,11 @@ postgresql_connector = Connector(
                 "type": "object",
                 "properties": {
                     "connection_string": {"type": "string", "title": "Connection String", "description": "PostgreSQL connection URI (e.g., postgresql://user:pass@host:5432/db)"},
-                    "query": {"type": "string", "title": "SQL Query", "description": "SELECT query to execute. Use $1, $2 for parameters."},
+                    "query": {"type": "string", "title": "SQL Query", "description": "SELECT query to execute. Write %s for each value and list the values under Query Parameters. The query text itself is never templated."},
                     "params": {
                         "type": "array",
                         "title": "Query Parameters",
-                        "description": "Positional parameters for the query (prevents SQL injection)",
+                        "description": "Values for the %s placeholders, in order. {{field}} templates are resolved here (and only here).",
                     },
                 },
                 "required": ["connection_string", "query"],
@@ -40,7 +40,7 @@ postgresql_connector = Connector(
                 "type": "object",
                 "properties": {
                     "connection_string": {"type": "string", "title": "Connection String", "description": "PostgreSQL connection URI"},
-                    "query": {"type": "string", "title": "SQL Statement", "description": "INSERT/UPDATE/DELETE statement. Use $1, $2 for parameters."},
+                    "query": {"type": "string", "title": "SQL Statement", "description": "INSERT/UPDATE/DELETE statement. Write %s for each value and list the values under Query Parameters. The statement text itself is never templated."},
                     "params": {
                         "type": "array",
                         "title": "Query Parameters",

@@ -7,10 +7,19 @@ from src.worker.models import ActionStatus, ActionResult
 from src.worker.registry import action
 
 
+def _prepare(config: dict, data: dict) -> dict:
+    """Template only 'params'. 'query' and 'connection_string' are used exactly as written, so values that
+    come from triggers or earlier steps can never change the SQL or choose the database; they reach the
+    database only as bound parameters (%s placeholders)."""
+    prepared = dict(config)
+    prepared["params"] = resolve_config({"params": config.get("params", [])}, data)["params"]
+    return prepared
+
+
 @action("postgresql_query")
 class PostgresQueryHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = _prepare(config or {}, data)
         connection_string = config.get("connection_string", "")
         query = config.get("query", "")
         params = config.get("params", [])
@@ -42,7 +51,7 @@ class PostgresQueryHandler:
 @action("postgresql_execute")
 class PostgresExecuteHandler:
     def execute(self, instance_id, data, config=None, **kwargs):
-        config = resolve_config(config or {}, data)
+        config = _prepare(config or {}, data)
         connection_string = config.get("connection_string", "")
         query = config.get("query", "")
         params = config.get("params", [])

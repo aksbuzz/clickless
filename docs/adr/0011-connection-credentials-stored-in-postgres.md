@@ -38,7 +38,7 @@ Negative / known gaps:
 - The nginx container proxies all of `/api/`, so the same endpoint is reachable from the browser-facing port.
 - Inline credentials are not stripped when a connection is selected in the builder, and definitions are displayed in the UI as JSON (F-19).
 - Connection usage is not tracked: deleting a connection referenced by a workflow is allowed, and at run time the worker logs a warning and continues without it, so the step fails later with a confusing missing-field error.
-- Templating is applied to the whole merged config, including SQL text in the PostgreSQL handlers, so values from triggers (for example an issue title) can alter the query (F-05). Handlers also call arbitrary caller-supplied URLs and connection strings, so a stored connection can be pointed at internal hosts (F-06).
+- Templating used to be applied to the whole merged config, including SQL text in the PostgreSQL handlers, so values from triggers (for example an issue title) could alter the query (F-05). Fixed on 2026-10-10: only `params` is templated; `query` and `connection_string` are used as written. Handlers also call arbitrary caller-supplied URLs and connection strings, so a stored connection can be pointed at internal hosts (F-06).
 - Secrets can end up in logs and history: the `log` handler writes the whole instance data at INFO, and each step execution stores full input and output snapshots (F-19).
 
 ## References
